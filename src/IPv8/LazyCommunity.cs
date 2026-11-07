@@ -150,6 +150,30 @@ namespace IPv8
         }
 
         /// <summary>
+        /// Unpack a signed message WITHOUT a GlobalTimeDistributionPayload header — the
+        /// ``lazy_wrapper``/``lazy_wrapper_wd`` semantics used by py-ipv8's DHT messages (the
+        /// packets carry only [auth, payload] + signature).
+        /// </summary>
+        public (Peer Peer, TPayload Payload) EzUnpackAuthNoDist<TPayload>(Address sourceAddress, byte[] data)
+            where TPayload : Payload, new()
+        {
+            var auth = Serializer.UnpackSerializableAs<BinMemberAuthenticationPayload>(data, 23);
+            var (signatureValid, remainder) = VerifySignature(auth, data);
+            var unpacked = Serializer.UnpackSerializableList(new[] { typeof(TPayload) }, remainder, 23);
+            if (!signatureValid)
+            {
+                throw new PacketDecodingError(
+                    $"Incoming packet [{typeof(TPayload).Name}] has an invalid signature");
+            }
+            var peer = Network.GetVerifiedByPublicKeyBin(auth.PublicKeyBin);
+            if (peer != null)
+            {
+                peer.AddAddress(sourceAddress);
+            }
+            return (peer ?? new Peer(auth.PublicKeyBin, sourceAddress), (TPayload)unpacked[0]);
+        }
+
+        /// <summary>
         /// Unpack just the normal payloads (starting at byte offset 23), like py-ipv8's
         /// ``lazy_wrapper_unsigned``. Returns (dist, payload) or (null, payload) without global time.
         /// </summary>

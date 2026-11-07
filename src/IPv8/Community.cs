@@ -602,7 +602,7 @@ namespace IPv8
         /// <summary>
         /// Perform introduction logic to get into the network: no-op without bootstrappers (Phase 1a).
         /// </summary>
-        public virtual void Bootstrap()
+        public override void Bootstrap()
         {
         }
 

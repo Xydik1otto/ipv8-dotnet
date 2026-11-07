@@ -52,6 +52,8 @@ namespace IPv8.PeerDiscovery
         private readonly Dictionary<Address, Peer> _reverseIpLookup = new Dictionary<Address, Peer>();
         private readonly Dictionary<Peer, List<Address>> _reverseIntroLookup
             = new Dictionary<Peer, List<Address>>();
+        private readonly Dictionary<byte[], List<Peer>> _reverseServiceLookup
+            = new Dictionary<byte[], List<Peer>>(ByteArrayEqualityComparer.Instance);
         private readonly List<IPeerObserver> _peerObservers = new List<IPeerObserver>();
         private readonly object _graphLock = new object();
 
@@ -133,6 +135,17 @@ namespace IPv8.PeerDiscovery
                 foreach (var service in services)
                 {
                     known.Add(service);
+                    // Maintain the reverse service cache, mirroring py-ipv8.
+                    if (_reverseServiceLookup.TryGetValue(service, out var serviceCache))
+                    {
+                        serviceCache.RemoveAll(candidate => candidate.Equals(peer));
+                        _verifiedByPublicKeyBin.TryGetValue(keyMaterial, out var verifiedPeer);
+                        serviceCache.Add(verifiedPeer ?? peer);
+                        if (_reverseServiceLookup.Count > ReverseServiceCacheSize)
+                        {
+                            DropOldest(_reverseServiceLookup);
+                        }
+                    }
                 }
             }
         }
@@ -206,15 +219,45 @@ namespace IPv8.PeerDiscovery
         {
             lock (_graphLock)
             {
-                var outPeers = new List<Peer>();
-                foreach (var peer in _verifiedPeers)
+                List<Peer> serviceCache;
+                if (_reverseServiceLookup.TryGetValue(serviceId, out serviceCache))
                 {
-                    var keyMaterial = peer.PublicKey.KeyToBin();
-                    if (_servicesPerPeer.TryGetValue(keyMaterial, out var services)
-                        && ContainsBytes(services.ToList(), serviceId))
+                    _reverseServiceLookup.Remove(serviceId);
+                }
+                else
+                {
+                    serviceCache = null;
+                }
+                var outPeers = new List<Peer>();
+                if (serviceCache == null)
+                {
+                    foreach (var peer in _verifiedPeers)
                     {
-                        outPeers.Add(peer);
+                        var keyMaterial = peer.PublicKey.KeyToBin();
+                        if (_servicesPerPeer.TryGetValue(keyMaterial, out var services)
+                            && ContainsBytes(services.ToList(), serviceId))
+                        {
+                            outPeers.Add(peer);
+                        }
                     }
+                }
+                else
+                {
+                    foreach (var peer in serviceCache)
+                    {
+                        var keyMaterial = peer.PublicKey.KeyToBin();
+                        if (_verifiedPeers.Contains(peer)
+                            && _servicesPerPeer.TryGetValue(keyMaterial, out var services)
+                            && ContainsBytes(services.ToList(), serviceId))
+                        {
+                            outPeers.Add(peer);
+                        }
+                    }
+                }
+                _reverseServiceLookup[serviceId] = outPeers;
+                if (_reverseServiceLookup.Count > ReverseServiceCacheSize)
+                {
+                    DropOldest(_reverseServiceLookup);
                 }
                 return outPeers;
             }
@@ -265,8 +308,10 @@ namespace IPv8.PeerDiscovery
                         {
                             continue;
                         }
+                        // py-ipv8 quirk: services_per_peer.get(intro_peer, set()) returns the STORED
+                        // set, and adding the walkable service mutates it in place.
                         var services = _servicesPerPeer.TryGetValue(walkable.IntroducedBy, out var knownServices)
-                            ? new HashSet<byte[]>(knownServices, ByteArrayEqualityComparer.Instance)
+                            ? knownServices
                             : new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
                         if (walkable.Services != null)
                         {
@@ -349,19 +394,21 @@ namespace IPv8.PeerDiscovery
             lock (_graphLock)
             {
                 _allAddresses.Remove(address);
+                // py-ipv8: keep the peers that do NOT use this address; peers that DO use it are
+                // removed, and (as a side effect of the lazy `or` in the set comprehension) their
+                // services_per_peer entry is popped.
                 var removedPeers = new List<Peer>();
                 foreach (var peer in _verifiedPeers.ToList())
                 {
-                    if (!peer.Addresses.Values.Contains(address))
+                    if (peer.Addresses.Values.Contains(address))
                     {
-                        removedPeers.Add(peer);
                         _servicesPerPeer.Remove(peer.PublicKey.KeyToBin());
+                        removedPeers.Add(peer);
                     }
                 }
                 foreach (var peer in removedPeers)
                 {
                     _verifiedPeers.Remove(peer);
-                    _verifiedByPublicKeyBin.Remove(peer.PublicKey.KeyToBin());
                     NotifyPeerRemoved(peer);
                 }
             }
@@ -400,6 +447,61 @@ namespace IPv8.PeerDiscovery
             lock (_graphLock)
             {
                 _peerObservers.Remove(observer);
+            }
+        }
+
+        /// <summary>Get a snapshot of all verified peers (py-ipv8 Network.snapshot).</summary>
+        public byte[] Snapshot()
+        {
+            lock (_graphLock)
+            {
+                var serializer = new Messaging.Serializer();
+                var parts = new List<byte[]>();
+                foreach (var peer in _verifiedPeers)
+                {
+                    if (!(peer.Address.Host == "0.0.0.0" && peer.Address.Port == 0))
+                    {
+                        parts.Add(serializer.Pack("address", peer.Address));
+                    }
+                }
+                return Util.Concat(parts.ToArray());
+            }
+        }
+
+        /// <summary>
+        /// Load a snapshot into the walkable addresses. This method will prefer returning no peers
+        /// over throwing an exception (py-ipv8 Network.load_snapshot).
+        /// </summary>
+        public void LoadSnapshot(byte[] snapshot)
+        {
+            snapshot ??= Util.EmptyBytes;
+            var snaplen = snapshot.Length;
+            var offset = 0;
+            var serializer = new Messaging.Serializer();
+            lock (_graphLock)
+            {
+                while (offset < snaplen)
+                {
+                    var previousOffset = offset;
+                    Address address = default;
+                    try
+                    {
+                        var (value, newOffset) = serializer.Unpack("address", snapshot, offset);
+                        address = (Address)value;
+                        offset = newOffset;
+                        _allAddresses[address] = new WalkableAddress(Util.EmptyBytes, null, false);
+                    }
+                    catch (Exception)
+                    {
+                        if (offset <= previousOffset)
+                        {
+                            // We got stuck, or even went back in time.
+                            Console.Error.WriteLine("Snapshot loading got stuck! Aborting snapshot load.");
+                            break;
+                        }
+                        Console.Error.WriteLine($"Snapshot failed on entry, skipping {address}!");
+                    }
+                }
             }
         }
 

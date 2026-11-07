@@ -55,6 +55,8 @@ namespace IPv8
     /// <summary>Interface for an Internet overlay (port of ipv8/overlay.py::Overlay).</summary>
     public abstract class Overlay : EndpointListener
     {
+        private readonly TaskManager _taskManager = new TaskManager();
+
         protected Overlay(OverlaySettings settings) : base(settings.Endpoint)
         {
             Serializer = GetSerializer();
@@ -75,8 +77,28 @@ namespace IPv8
         /// <summary>The peer representing us (with private key).</summary>
         public Peer MyPeer { get; }
 
-        /// <summary>The network graph backend.</summary>
-        public Network Network { get; }
+        /// <summary>The network graph backend (py-ipv8 lets communities replace this).</summary>
+        public Network Network { get; protected set; }
+
+        // py-ipv8's Overlay extends TaskManager; C# single inheritance forces composition here.
+        // The forwarding members below mirror the TaskManager API surface used by overlays.
+        public PendingTask RegisterTask(object name, Action userTask, double delay = 0, double interval = 0)
+            => _taskManager.RegisterTask(name, userTask, delay, interval);
+
+        public PendingTask RegisterAnonymousTask(string basename, Action userTask,
+                                                 double delay = 0, double interval = 0)
+            => _taskManager.RegisterAnonymousTask(basename, userTask, delay, interval);
+
+        public void CancelPendingTask(object name) => _taskManager.CancelPendingTask(name);
+
+        public List<PendingTask> CancelAllPendingTasks() => _taskManager.CancelAllPendingTasks();
+
+        public bool IsPendingTaskActive(object name) => _taskManager.IsPendingTaskActive(name);
+
+        public PendingTask GetTask(object name) => _taskManager.GetTask(name);
+
+        /// <summary>Unload this overlay: cancel all of our registered tasks.</summary>
+        public virtual void Unload() => _taskManager.ShutdownTaskManager();
 
         /// <summary>Get a Serializer for this Overlay.</summary>
         protected virtual Serializer GetSerializer() => new Serializer();
@@ -117,5 +139,13 @@ namespace IPv8
 
         /// <summary>Get a peer for introduction (null when there are no available).</summary>
         public virtual Peer GetPeerForIntroduction(Peer exclude = null, bool newStyle = false) => null;
+
+        /// <summary>
+        /// Perform introduction logic to get into the network (py-ipv8 Community.bootstrap;
+        /// a no-op without bootstrappers).
+        /// </summary>
+        public virtual void Bootstrap()
+        {
+        }
     }
 }

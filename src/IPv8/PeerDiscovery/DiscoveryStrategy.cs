@@ -105,4 +105,125 @@ namespace IPv8.PeerDiscovery
             }
         }
     }
+
+    /// <summary>
+    /// Walk through the network by using edges (port of py-ipv8 EdgeWalk).
+    ///
+    /// This will perform a depth-first search in the network starting from your direct
+    /// neighborhood. When a certain depth is reached, we teleport home and start again from our
+    /// neighborhood.
+    /// </summary>
+    public class EdgeWalk : DiscoveryStrategy
+    {
+        private static readonly Random Rng = new Random();
+
+        private List<Peer> _neighborhood = new List<Peer>();
+
+        public readonly List<List<Peer>> CompleteEdges = new List<List<Peer>>();
+        public readonly Dictionary<Peer, List<Peer>> UnderConstruction = new Dictionary<Peer, List<Peer>>();
+        public readonly Dictionary<Peer, double> LastEdgeResponses = new Dictionary<Peer, double>();
+
+        public readonly int EdgeLength;
+        public readonly int NeighborhoodSize;
+        public readonly double EdgeTimeout;
+
+        public EdgeWalk(Overlay overlay, int edgeLength = 4, int neighborhoodSize = 6, double edgeTimeout = 3.0)
+            : base(overlay)
+        {
+            EdgeLength = edgeLength;
+            NeighborhoodSize = neighborhoodSize;
+            EdgeTimeout = edgeTimeout;
+        }
+
+        /// <summary>Get a root which is not busy constructing an edge for us, if one exists.</summary>
+        public Peer GetAvailableRoot()
+        {
+            var available = new List<Peer>(_neighborhood);
+            available.RemoveAll(root => UnderConstruction.ContainsKey(root));
+            return available.Count > 0 ? available[Rng.Next(available.Count)] : null;
+        }
+
+        /// <summary>Attempt to grow an edge.</summary>
+        public override void TakeStep()
+        {
+            lock (WalkLock)
+            {
+                if (_neighborhood.Count == 0 || _neighborhood.Count < NeighborhoodSize)
+                {
+                    // Wait for our immediate neighborhood to be discovered
+                    var peers = Overlay.GetPeers();
+                    _neighborhood = peers.Take(NeighborhoodSize).ToList();
+                    Overlay.Bootstrap();
+                    foreach (var address in Overlay.GetWalkableAddresses().Take(NeighborhoodSize).ToList())
+                    {
+                        Overlay.WalkTo(address);
+                    }
+                }
+                else
+                {
+                    var waitingRoot = GetAvailableRoot();
+                    // Make sure we have as many outstanding/actively growing edges as roots
+                    if (waitingRoot != null)
+                    {
+                        UnderConstruction[waitingRoot] = new List<Peer> { waitingRoot };
+                        LastEdgeResponses[waitingRoot] = Util.NowEpoch();
+                        Overlay.GetNewIntroduction(waitingRoot);
+                    }
+                    else
+                    {
+                        // Check if our introduced peer has answered yet
+                        var completed = new List<Peer>();
+                        foreach (var root in UnderConstruction.Keys.ToList())
+                        {
+                            var lastVerified = UnderConstruction[root][UnderConstruction[root].Count - 1];
+                            var introductions = new List<Peer>();
+                            foreach (var intro in Overlay.Network.GetIntroductionsFrom(lastVerified))
+                            {
+                                var verified = Overlay.Network.GetVerifiedByAddress(intro);
+                                if (verified != null)
+                                {
+                                    introductions.Add(verified);
+                                }
+                                else
+                                {
+                                    Overlay.WalkTo(intro);
+                                }
+                            }
+                            if (introductions.Count > 0)
+                            {
+                                // We got (multiple?) introductions from this peer, add it as verified
+                                LastEdgeResponses[root] = Util.NowEpoch();
+                                var nextInEdge = introductions[Rng.Next(introductions.Count)];
+                                UnderConstruction[root].Add(nextInEdge);
+                                if (UnderConstruction[root].Count == EdgeLength)
+                                {
+                                    // We have crawled the maximum depth, teleport home
+                                    CompleteEdges.Add(UnderConstruction[root]);
+                                    completed.Add(root);
+                                }
+                                else
+                                {
+                                    // Take this edge a step further
+                                    Overlay.WalkTo(nextInEdge.Address);
+                                }
+                            }
+                            else if (LastEdgeResponses[root] + EdgeTimeout < Util.NowEpoch())
+                            {
+                                // This edge isn't growing, mark it as complete
+                                if (UnderConstruction[root].Count > 1)
+                                {
+                                    CompleteEdges.Add(UnderConstruction[root]);
+                                }
+                                completed.Add(root);
+                            }
+                        }
+                        foreach (var root in completed)
+                        {
+                            UnderConstruction.Remove(root);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

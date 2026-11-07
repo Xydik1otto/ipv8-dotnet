@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="vectors.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="vectors-phase1b.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

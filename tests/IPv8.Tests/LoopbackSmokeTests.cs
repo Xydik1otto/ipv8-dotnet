@@ -165,7 +165,7 @@ namespace IPv8.Tests
                                                      new[] { nodeA.Community.CommunityId });
             nodeA.Community.Network.DiscoverAddress(nodeA.Community.MyPeer, nodeB.Address,
                                                     nodeA.Community.CommunityId, false);
-            var strategy = new RandomWalk(nodeA.Community);
+            var strategy = new RandomWalk(nodeA.Community, resetChance: 0);
             strategy.TakeStep();
 
             // The walk resulted in an (in-flight) introduction request to node B, which answers.

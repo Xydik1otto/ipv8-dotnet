@@ -95,6 +95,17 @@ namespace IPv8
 
         public static byte[] EmptyBytes = Array.Empty<byte>();
 
+        /// <summary>Hex-decode a lowercase/uppercase hex string (Python bytes.fromhex / unhexlify).</summary>
+        public static byte[] Unhex(string hex)
+        {
+            var data = new byte[hex.Length / 2];
+            for (var i = 0; i < data.Length; i++)
+            {
+                data[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            }
+            return data;
+        }
+
         public static bool BytesEqual(byte[] a, byte[] b)
         {
             if (ReferenceEquals(a, b))
