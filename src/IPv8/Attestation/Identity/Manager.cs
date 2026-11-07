@@ -186,9 +186,9 @@ namespace IPv8.Attestation.Identity
     /// Manager of our own pseudonyms and those of others
     /// (port of ipv8/attestation/identity/manager.py::IdentityManager).
     /// </summary>
-    public class IdentityManager
+    public class IdentityManager : IDisposable
     {
-        public readonly IdentityDatabase Database;
+        public IdentityDatabase Database { get; private set; }
 
         private readonly Dictionary<byte[], PseudonymManager> _pseudonyms =
             new Dictionary<byte[], PseudonymManager>(ByteArrayEqualityComparer.Instance);
@@ -199,6 +199,23 @@ namespace IPv8.Attestation.Identity
         {
             Database = new IdentityDatabase(databasePath);
             Database.Open();
+        }
+
+        /// <summary>py test helper: drop all identity information from our memory database.</summary>
+        public void ForgetIdentities()
+        {
+            _pseudonyms.Clear();
+            Database = new IdentityDatabase(":memory:");
+            Database.Open();
+        }
+
+        /// <summary>Closes the underlying database.</summary>
+        public void Dispose()
+        {
+            if (Database.IsOpen)
+            {
+                Database.Close();
+            }
         }
 
         /// <summary>Get the pseudonym belonging to a given public or private key.</summary>

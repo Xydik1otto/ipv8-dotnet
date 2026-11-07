@@ -186,17 +186,27 @@ namespace IPv8.Attestation.Identity
                 }
                 var knownDict = known.Metadata.ToDictionary(pair => pair.Key,
                                                             pair => (object)pair.Value);
-                if (extra.Count != knownDict.Count || extra.Any(pair =>
-                        !knownDict.TryGetValue(pair.Key, out var knownValue)
-                        || !ValuesEqual(pair.Value, knownValue)))
+                if (!JsonDictExactEqual(extra, knownDict))
                 {
                     return false;
                 }
             }
-            foreach (var attestation in pseudonym.Database.GetAttestationsOver(metadata))
+            // NOTE (py quirk preserved): the reference iterates over the result of get_authority()
+            // — a bytes object — which yields ints that never equal key_to_bin(). The
+            // "already attested" dedup check therefore never fires in py-ipv8 either.
+            return true;
+        }
+
+        /// <summary>py dict equality: keys AND values with exact type awareness (12 != "12").</summary>
+        private static bool JsonDictExactEqual(Dictionary<string, object> a, Dictionary<string, object> b)
+        {
+            if (a.Count != b.Count)
             {
-                var authority = pseudonym.Database.GetAuthority(attestation);
-                if (authority != null && Util.BytesEqual(authority, MyPeer.PublicKey.KeyToBin()))
+                return false;
+            }
+            foreach (var pair in a)
+            {
+                if (!b.TryGetValue(pair.Key, out var bValue) || !JsonValueEqual(pair.Value, bValue))
                 {
                     return false;
                 }
@@ -204,16 +214,49 @@ namespace IPv8.Attestation.Identity
             return true;
         }
 
-        private static bool ValuesEqual(object a, object b)
-            => string.Equals(Convert.ToString(a, System.Globalization.CultureInfo.InvariantCulture),
-                             Convert.ToString(b, System.Globalization.CultureInfo.InvariantCulture),
-                             StringComparison.Ordinal);
+        private static bool JsonValueEqual(object a, object b)
+        {
+            if (a is null || b is null)
+            {
+                return a is null && b is null;
+            }
+            if (a.GetType() != b.GetType())
+            {
+                return false;
+            }
+            if (a is byte[] aBytes && b is byte[] bBytes)
+            {
+                return Util.BytesEqual(aBytes, bBytes);
+            }
+            if (a is IEnumerable<object> aList && b is IEnumerable<object> bList)
+            {
+                var listA = new List<object>(aList);
+                var listB = new List<object>(bList);
+                if (listA.Count != listB.Count)
+                {
+                    return false;
+                }
+                for (var i = 0; i < listA.Count; i++)
+                {
+                    if (!JsonValueEqual(listA[i], listB[i]))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (a is Dictionary<string, object> aDict && b is Dictionary<string, object> bDict)
+            {
+                return JsonDictExactEqual(aDict, bDict);
+            }
+            return a.Equals(b);
+        }
 
         /// <summary>Fit a disclosure (metadata, tokens, attestations and authorities) to a UDP packet.</summary>
         private (byte[] Metadata, byte[] Tokens, byte[] Attestations, byte[] Authorities) FitDisclosure(
             (byte[] Metadata, byte[] Tokens, byte[] Attestations, byte[] Authorities) disclosure)
         {
-            var tokenSize = 64 + Crypto.GetSignatureLength((Keyvault.PublicKey)MyPeer.Key);
+            var tokenSize = 64 + MyPeer.PublicKey.GetSignatureLength();
             var metadata = disclosure.Metadata;
             var tokens = disclosure.Tokens;
             var attestations = disclosure.Attestations;
@@ -222,11 +265,14 @@ namespace IPv8.Attestation.Identity
             if (metaLen + tokens.Length > SafeUdpPacketLength)
             {
                 var packetSpace = SafeUdpPacketLength - metaLen;
-                packetSpace = Math.Max(0, packetSpace);
-                var trimLen = packetSpace / tokenSize;
-                tokens = Util.Slice(tokens,
-                                    Math.Max(0, tokens.Length - trimLen * tokenSize),
-                                    Math.Min(tokens.Length, trimLen * tokenSize));
+                var trimLen = Math.Max(0, packetSpace / tokenSize);
+                // py quirk preserved: ``tokens[-trim_len * token_size:]`` with trim_len == 0 is
+                // ``tokens[0:]`` — the FULL tokens blob (the trimming simply does not happen).
+                tokens = trimLen == 0
+                    ? tokens
+                    : Util.Slice(tokens,
+                                 Math.Max(0, tokens.Length - trimLen * tokenSize),
+                                 Math.Min(tokens.Length, trimLen * tokenSize));
             }
             return (metadata, tokens, attestations, authorities);
         }
