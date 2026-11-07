@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <!-- The port mirrors Python's implicit nullability: NRT flow analysis adds noise, not
+         safety, here. The "annotations" context keeps the documented ?-annotations legal
+         (no CS8632) without turning Python-style null-tolerance into compiler warnings. -->
+    <Nullable>annotations</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>IPv8</RootNamespace>
+    <AssemblyName>IPv8</AssemblyName>
+    <Version>0.1.0</Version>
+    <Description>C# port of the IPv8 P2P networking layer (Tribler/py-ipv8). LGPL-3.0-or-later.</Description>
+    <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.5.1" />
+  </ItemGroup>
+</Project>
