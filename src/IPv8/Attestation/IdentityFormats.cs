@@ -24,6 +24,18 @@ namespace IPv8.Wallet.Cryptography
         /// <summary>Serialize this Attestation to a string, including shared secrets (not to be published!).</summary>
         public abstract byte[] SerializePrivateKey(object privateKey);
 
+        /// <summary>
+        /// Unserialize the public form (py: ``get_attestation_class().unserialize``; the C# port
+        /// dispatches through a prototype instance returned by IdentityAlgorithm.GetAttestationClass).
+        /// </summary>
+        public abstract Attestation Unserialize(byte[] serialized, string idFormat);
+
+        /// <summary>
+        /// Unserialize the private form, containing shared secrets not to be published
+        /// (py: ``get_attestation_class().unserialize_private``).
+        /// </summary>
+        public abstract Attestation UnserializePrivateKey(object secretKey, byte[] serialized, string idFormat);
+
         /// <summary>The hash over the public part of this Attestation (py: sha1(serialize())).</summary>
         public byte[] GetHash() => Util.Sha1(Serialize());
     }
