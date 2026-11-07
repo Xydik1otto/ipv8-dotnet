@@ -34,9 +34,8 @@ namespace IPv8.Tests
         {
             public AttestationCommunity Community;
             public UDPEndpoint InnerEndpoint;
-            private TamperingEndpoint _tamperWrapper;
 
-            public static TestNode Create(byte[] bonehSecretKeySerialization = null, bool tamperDisclosure = false)
+            public static TestNode Create(bool tamperDisclosure = false)
             {
                 var myPeer = new Peer(ECCrypto.Default.GenerateKey("curve25519"));
                 var inner = new UDPEndpoint(0, "127.0.0.1");
@@ -56,8 +55,7 @@ namespace IPv8.Tests
                 return new TestNode
                 {
                     Community = community,
-                    InnerEndpoint = inner,
-                    _tamperWrapper = endpoint as TamperingEndpoint
+                    InnerEndpoint = inner
                 };
             }
 
