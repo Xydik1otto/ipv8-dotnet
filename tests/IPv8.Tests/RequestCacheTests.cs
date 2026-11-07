@@ -217,11 +217,14 @@ namespace IPv8.Tests
         public void RegisterTask_Name_Clash_Throws()
         {
             var taskManager = new TaskManager();
-            taskManager.RegisterTask("t", () => { });
+            // A delay keeps the task pending: a zero-delay task finishes (and frees its name)
+            // immediately on the thread pool, making the clash check a race.
+            taskManager.RegisterTask("t", () => { }, delay: 10.0);
             Assert.Throws<InvalidOperationException>(() => taskManager.RegisterTask("t", () => { }));
             taskManager.CancelPendingTask("t");
             // After cancellation the name is free again.
-            taskManager.RegisterTask("t", () => { });
+            taskManager.RegisterTask("t", () => { }, delay: 10.0);
+            taskManager.CancelPendingTask("t");
         }
 
         [Fact]

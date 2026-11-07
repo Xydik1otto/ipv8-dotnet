@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using IPv8.Bootstrapping;
 using IPv8.Messaging;
 using IPv8.Messaging.Interfaces;
 
@@ -52,6 +53,12 @@ namespace IPv8
         private readonly byte[] _prefix;
         private readonly PacketHandler?[] _decodeMap = new PacketHandler?[256];
         private static readonly Random ChoiceRng = new Random();
+
+        /// <summary>
+        /// The bootstrappers of this Community (community.py: self.bootstrappers), usually
+        /// populated by the IPv8 service configuration.
+        /// </summary>
+        public List<Bootstrapper> Bootstrappers { get; } = new List<Bootstrapper>();
 
         protected Community(CommunitySettings settings, byte[] communityId) : base(WithCommunityId(settings, communityId))
         {
@@ -577,6 +584,18 @@ namespace IPv8
         }
 
         /// <summary>
+        /// Add an address to the blacklist, if it is not already there
+        /// (community.py::ensure_blacklisted).
+        /// </summary>
+        public void EnsureBlacklisted(Address address)
+        {
+            if (!Network.Blacklist.Contains(address))
+            {
+                Network.Blacklist.Add(address);
+            }
+        }
+
+        /// <summary>
         /// Get a new introduction, or bootstrap if there are no available peers.
         /// </summary>
         public override void GetNewIntroduction(Peer fromPeer = null)
@@ -586,8 +605,16 @@ namespace IPv8
                 var available = GetPeers().ToList();
                 if (available.Count > 0)
                 {
-                    // The py-ipv8 5% bootstrapper keep-alive chance: our minimal bootstrapper list is
-                    // always empty in Phase 1a, so this branch is a no-op.
+                    // With a small chance, try to remedy any disconnected network phenomena.
+                    var bootstrappersReady = Bootstrappers.Any(b => b.Initialized);
+                    if (bootstrappersReady && ChoiceRng.NextDouble() < 0.05)
+                    {
+                        foreach (var bootstrapper in Bootstrappers)
+                        {
+                            bootstrapper.KeepAlive(this);
+                        }
+                        return;
+                    }
                     fromPeer = available[ChoiceRng.Next(available.Count)];
                 }
                 else
@@ -600,10 +627,47 @@ namespace IPv8
         }
 
         /// <summary>
-        /// Perform introduction logic to get into the network: no-op without bootstrappers (Phase 1a).
+        /// Contact the bootstrappers for new peers, initialize the bootstrappers if necessary
+        /// (community.py::bootstrap).
         /// </summary>
         public override void Bootstrap()
         {
+            foreach (var bootstrapper in Bootstrappers)
+            {
+                var target = bootstrapper;
+                RegisterAnonymousTask($"bootstrap {target.GetType().Name}",
+                    () => BootstrapAsync(target).GetAwaiter().GetResult());
+            }
+        }
+
+        /// <summary>Contact a single bootstrapper for new peers and initialize if necessary.</summary>
+        private async Task BootstrapAsync(Bootstrapper bootstrapper)
+        {
+            var initTask = bootstrapper.InitializeAsync(this);
+
+            var addresses = await bootstrapper.GetAddressesAsync(this, 60.0);
+            var limit = MaxPeers > 0 ? Math.Min(addresses.Count, MaxPeers) : addresses.Count;
+            for (var i = 0; i < limit; i++)
+            {
+                WalkTo(addresses[i]);
+            }
+
+            await initTask;
+        }
+
+        /// <summary>
+        /// Perform a clean exit of this Community: first unload the bootstrappers, then stop
+        /// listening on the endpoint and disallow new tasks (community.py::unload).
+        /// </summary>
+        public override void Unload()
+        {
+            while (Bootstrappers.Count > 0)
+            {
+                var bootstrapper = Bootstrappers[Bootstrappers.Count - 1];
+                Bootstrappers.RemoveAt(Bootstrappers.Count - 1);
+                bootstrapper.Unload();
+            }
+            base.Unload();
         }
 
         /// <summary>Return a random peer to send an introduction request to.</summary>
