@@ -106,6 +106,17 @@ namespace IPv8
             return data;
         }
 
+        /// <summary>Lowercase hex encoding of a byte array (Python binascii.hexlify).</summary>
+        public static string Hex(byte[] data)
+        {
+            var sb = new System.Text.StringBuilder(data.Length * 2);
+            foreach (var b in data)
+            {
+                sb.Append(b.ToString("x2"));
+            }
+            return sb.ToString();
+        }
+
         public static bool BytesEqual(byte[] a, byte[] b)
         {
             if (ReferenceEquals(a, b))
