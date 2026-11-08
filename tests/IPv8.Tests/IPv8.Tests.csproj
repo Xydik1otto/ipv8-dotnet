@@ -17,5 +17,6 @@
     <None Include="vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="vectors-phase1b.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="vectors-phase2.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="vectors-phase3.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
