@@ -277,5 +277,63 @@ namespace IPv8.Tests
                                               "dh_ephemeral_responder_pk_hex");
             Assert.True(TunnelSessionCrypto.CryptoAuthVerify(auth, Util.Slice(shared, 0, 32), responderTmpPk));
         }
+
+        // Correct beforenm-composition goldens printed by contract/tunnelcrypto_ref.py
+        // (the JSON fixture's created_handshake uses raw X25519 halves — documented
+        // deviation — so the rust-mandated composition goldens are pinned here instead).
+        private const string RefSharedSecret =
+            "921c10a75ecf05ac704373f59ff4ec283af50058b4bbe51f6ad93b6741df6471d0cc28d5abb3a95840563467d4345f42fb9e9e847813d1cd213526246851c968";
+        private const string RefAuth =
+            "328c01776c7194d16d0ddf8cfa10c087aa0174d85905c77f4cf9af3e0bb5235c";
+        private const string RefKeyBackward =
+            "b421808c33285e6b99340febde60866736f09c87597e1608327679ef2d945bcd";
+        private const string RefKeyForward =
+            "0e01137c3e07ac26b3382044a5690bc0a60ef6dbad8ca1844e92b8e26c8f1b21";
+        private const string RefSaltBackward = "31bf74d2";
+        private const string RefSaltForward = "32948896";
+        private const string RefCandidatesEnc =
+            "0000000000000002ac628282c73d41a5ce09e161b4500f43e2c5146a897d5c03dcdf285a063f92aa2d6628b009daa237305615a5b5679e6d182f284ec6cf6fd1745a6f1a711ad03f175a06228f3cfdaf054b7001fa79f48bfb68c8f55d8a3d90721b560b9d";
+
+        [Fact]
+        public void Created_Handshake_Beforenm_Composition()
+        {
+            // rust dh.rs composition (contract/tunnelcrypto_ref.py):
+            //   shared = beforenm(eph_pk, resp_sk) || beforenm(eph_pk, bob_id_sk)
+            //   auth   = crypto_auth(shared[:32], crypt_pk)
+            var keysMeta = Vectors3.Section("meta").GetProperty("keys");
+            var initSk = Vectors3.Hex(keysMeta, "dh_ephemeral_initiator_sk_hex");
+            var respSk = Vectors3.Hex(keysMeta, "dh_ephemeral_responder_sk_hex");
+            var bobIdSk = Vectors3.Hex(keysMeta, "bob_x_sk_hex");
+            var initPk = Vectors3.Hex(keysMeta, "dh_ephemeral_initiator_pk_hex");
+            var respPk = Vectors3.Hex(keysMeta, "dh_ephemeral_responder_pk_hex");
+            var bobIdPk = Vectors3.Hex(Vectors3.Section("x25519"), "bob_pk_hex");
+
+            // Responder side (generate_diffie_shared_secret).
+            var shared = Util.Concat(
+                TunnelSessionCrypto.CryptoBoxBeforeNm(initPk, respSk),
+                TunnelSessionCrypto.CryptoBoxBeforeNm(initPk, bobIdSk));
+            Assert.Equal(RefSharedSecret, Vectors3.Hex(shared));
+
+            var auth = TunnelSessionCrypto.CryptoAuth(Util.Slice(shared, 0, 32), respPk);
+            Assert.Equal(RefAuth, Vectors3.Hex(auth));
+
+            // Initiator side (verify_and_generate_shared_secret) lands on the same secret.
+            var sharedInit = Util.Concat(
+                TunnelSessionCrypto.CryptoBoxBeforeNm(respPk, initSk),
+                TunnelSessionCrypto.CryptoBoxBeforeNm(bobIdPk, initSk));
+            Assert.Equal(RefSharedSecret, Vectors3.Hex(sharedInit));
+            Assert.True(TunnelSessionCrypto.CryptoAuthVerify(auth, Util.Slice(sharedInit, 0, 32), respPk));
+
+            // Session keys expand from the beforenm secret and open the candidates blob.
+            var sessionKeys = TunnelSessionCrypto.GenerateSessionKeys(shared);
+            Assert.Equal(RefKeyBackward, Vectors3.Hex(sessionKeys.KeyBackward));
+            Assert.Equal(RefKeyForward, Vectors3.Hex(sessionKeys.KeyForward));
+            Assert.Equal(RefSaltBackward, Vectors3.Hex(sessionKeys.SaltBackward));
+            Assert.Equal(RefSaltForward, Vectors3.Hex(sessionKeys.SaltForward));
+
+            var candidatesBin = sessionKeys.DecryptStr(Util.Unhex(RefCandidatesEnc), TunnelDirection.Forward);
+            Assert.Equal(Vectors3.HexString(Vectors3.Section("created_handshake"), "candidates_bin_hex"),
+                         Vectors3.Hex(candidatesBin));
+        }
     }
 }

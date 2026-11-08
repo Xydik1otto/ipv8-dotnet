@@ -43,8 +43,8 @@ namespace IPv8
         /// <summary>Request use of a TunnelEndpoint to anonymize all our traffic (not ported in Phase 1a).</summary>
         public bool Anonymize { get; set; }
 
-        public CommunitySettings(byte[] communityId, Peer myPeer, Endpoint endpoint, Network network,
-                                 int maxPeers = 30, bool anonymize = false)
+        public CommunitySettings(byte[] communityId = null, Peer myPeer = null, Endpoint endpoint = null,
+                                 Network network = null, int maxPeers = 30, bool anonymize = false)
             : base(communityId, myPeer, endpoint, network)
         {
             MaxPeers = maxPeers;

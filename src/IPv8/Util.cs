@@ -153,6 +153,17 @@ namespace IPv8
         /// <summary>Seconds since the epoch (float), like Python's time.time().</summary>
         public static double NowEpoch()
             => (DateTimeOffset.UtcNow - new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
+
+        /// <summary>Cryptographically random bytes of the given size, like Python's os.urandom.</summary>
+        public static byte[] RandomBytes(int size)
+        {
+            var result = new byte[size];
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create())
+            {
+                rng.GetBytes(result);
+            }
+            return result;
+        }
     }
 
     /// <summary>Content-based equality comparer for byte arrays (for dictionary keys).</summary>

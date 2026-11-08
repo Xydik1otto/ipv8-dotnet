@@ -35,7 +35,8 @@ namespace IPv8.Messaging.Interfaces
     /// </summary>
     public abstract class Endpoint
     {
-        protected readonly List<EndpointListener> Listeners = new List<EndpointListener>();
+        // internal (instead of protected) so wrapper endpoints (TunnelEndpoint) can inspect listeners.
+        internal readonly List<EndpointListener> Listeners = new List<EndpointListener>();
         protected readonly Dictionary<byte[], List<EndpointListener>> PrefixMap
             = new Dictionary<byte[], List<EndpointListener>>(ByteArrayEqualityComparer.Instance);
         protected readonly int PrefixLen;
@@ -130,7 +131,8 @@ namespace IPv8.Messaging.Interfaces
         }
 
         /// <summary>Ensure that the listener is still loaded when delivering the packet later.</summary>
-        protected void DeliverLater(EndpointListener listener, Packet packet)
+        // internal (instead of protected) so wrapper endpoints (TunnelEndpoint) can deliver later.
+        internal void DeliverLater(EndpointListener listener, Packet packet)
         {
             var prefix = new byte[PrefixLen];
             Array.Copy(packet.Data, 0, prefix, 0, Math.Min(PrefixLen, packet.Data.Length));
@@ -227,6 +229,12 @@ namespace IPv8.Messaging.Interfaces
 
         /// <summary>Callback for when data is received on this endpoint.</summary>
         public abstract void OnPacket(Packet packet);
+
+        /// <summary>
+        /// Whether this listener is meant to receive tunneled (anonymized) traffic
+        /// (py-ipv8 dynamic attribute; used by TunnelEndpoint.notify_listeners).
+        /// </summary>
+        public bool Anonymize { get; set; }
 
         /// <summary>Whether the given host is an IPv6 address.</summary>
         protected static bool IsIpv6Address(string address)

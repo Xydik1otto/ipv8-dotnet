@@ -150,7 +150,7 @@ namespace IPv8
         /// <summary>
         /// Create a new introduction request message, without sending it.
         /// </summary>
-        public byte[] CreateIntroductionRequest(Address socketAddress, byte[] extraBytes = null,
+        public virtual byte[] CreateIntroductionRequest(Address socketAddress, byte[] extraBytes = null,
                                                 bool newStyle = false, byte[] prefix = null)
         {
             var globalTime = ClaimGlobalTime() % 65536;
@@ -182,7 +182,7 @@ namespace IPv8
         /// <summary>
         /// Create a new introduction response message, without sending it.
         /// </summary>
-        public byte[] CreateIntroductionResponse(Address lanSocketAddress, Address socketAddress, long identifier,
+        public virtual byte[] CreateIntroductionResponse(Address lanSocketAddress, Address socketAddress, long identifier,
                                                  Peer introduction = null, byte[] extraBytes = null,
                                                  byte[] prefix = null, bool newStyle = false)
         {
@@ -325,20 +325,21 @@ namespace IPv8
         /// <summary>Callback to handle introduction requests: we respond with an introduction response.</summary>
         protected virtual void OnIntroductionRequest(Peer peer, GlobalTimeDistributionPayload dist,
                                                      IntroductionRequestPayload payload)
-            => OnIntroductionRequestCore(peer, dist, payload.DestinationAddress, payload.SourceLanAddress,
-                                         payload.Identifier);
+            => OnIntroductionRequestCore(peer, dist, payload, payload.DestinationAddress,
+                                         payload.SourceLanAddress, payload.Identifier);
 
         /// <summary>Callback to handle new-style introduction requests.</summary>
         protected virtual void OnIntroductionRequest(Peer peer, GlobalTimeDistributionPayload dist,
                                                      NewIntroductionRequestPayload payload)
-            => OnIntroductionRequestCore(peer, dist, payload.DestinationAddress, payload.SourceLanAddress,
-                                         payload.Identifier);
+            => OnIntroductionRequestCore(peer, dist, payload, payload.DestinationAddress,
+                                         payload.SourceLanAddress, payload.Identifier);
 
         /// <summary>
         /// Core of the introduction-request handling (py-ipv8 on_introduction_request): we respond
         /// with an introduction response.
         /// </summary>
         protected virtual void OnIntroductionRequestCore(Peer peer, GlobalTimeDistributionPayload dist,
+                                                         Payload payload,
                                                          Address destinationAddress, Address sourceLanAddress,
                                                          long identifier)
         {
@@ -359,7 +360,7 @@ namespace IPv8
                                                     identifier, newStyle: peer.NewStyleIntro);
             Endpoint.Send(peer.Address, packet);
 
-            IntroductionRequestCallback(peer, dist, null);
+            IntroductionRequestCallback(peer, dist, payload);
         }
 
         private Task? OnOldIntroductionResponse(Address sourceAddress, byte[] data)
@@ -384,19 +385,22 @@ namespace IPv8
         /// <summary>Callback to handle introduction responses.</summary>
         protected virtual void OnIntroductionResponse(Peer peer, GlobalTimeDistributionPayload dist,
                                                       IntroductionResponsePayload payload)
-            => OnIntroductionResponseCore(peer, dist, payload.DestinationAddress, payload.SourceWanAddress,
-                                          payload.LanIntroductionAddress, payload.WanIntroductionAddress,
-                                          payload.Identifier, payload.IntroSupportsNewStyle);
+            => OnIntroductionResponseCore(peer, dist, payload, payload.DestinationAddress,
+                                          payload.SourceWanAddress, payload.LanIntroductionAddress,
+                                          payload.WanIntroductionAddress, payload.Identifier,
+                                          payload.IntroSupportsNewStyle);
 
         /// <summary>Callback to handle new-style introduction responses.</summary>
         protected virtual void OnIntroductionResponse(Peer peer, GlobalTimeDistributionPayload dist,
                                                       NewIntroductionResponsePayload payload)
-            => OnIntroductionResponseCore(peer, dist, payload.DestinationAddress, payload.SourceWanAddress,
-                                          payload.LanIntroductionAddress, payload.WanIntroductionAddress,
-                                          payload.Identifier, payload.IntroSupportsNewStyle);
+            => OnIntroductionResponseCore(peer, dist, payload, payload.DestinationAddress,
+                                          payload.SourceWanAddress, payload.LanIntroductionAddress,
+                                          payload.WanIntroductionAddress, payload.Identifier,
+                                          payload.IntroSupportsNewStyle);
 
         /// <summary>Core of the introduction-response handling (py-ipv8 on_introduction_response).</summary>
         protected virtual void OnIntroductionResponseCore(Peer peer, GlobalTimeDistributionPayload dist,
+                                                          Payload payload,
                                                           Address destinationAddress, Address sourceWanAddress,
                                                           Address lanIntroductionAddress,
                                                           Address wanIntroductionAddress, long identifier,
@@ -445,7 +449,7 @@ namespace IPv8
                 Network.DiscoverAddress(peer, introduction, CommunityId, introSupportsNewStyle);
             }
 
-            IntroductionResponseCallback(peer, dist, null);
+            IntroductionResponseCallback(peer, dist, payload);
         }
 
         private static bool IsZeroAddress(Address address)
