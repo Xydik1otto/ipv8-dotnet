@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>IPv8.Tools.InteropCli</RootNamespace>
+    <AssemblyName>InteropCli</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Headless IPv8 interop node (Phase 4 C1-C6). LGPL-3.0-or-later.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\IPv8\IPv8.csproj" />
+  </ItemGroup>
+</Project>
