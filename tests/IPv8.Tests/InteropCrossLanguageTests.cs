@@ -700,5 +700,106 @@ namespace IPv8.Tests
                 "the circuit heart beat on the returned PONG");
             Assert.Null(cs.Tunnel.LastHandlerException);
         }
+
+        // ----------------------------------------------------------------- C4: tunnel data
+
+        /// <summary>
+        /// C4: a datagram sent through the C3-style cross-language circuit exits at the Java
+        /// exit node to a loopback UDP echo server and returns byte-identical through the
+        /// tunnel to the C# initiator's raw-data path.
+        /// </summary>
+        [Fact]
+        public async Task C4_TunnelData_Interop_Exits_At_Java_Node_And_Echo_Returns()
+        {
+            if (!JavaCliAvailable())
+            {
+                _output.WriteLine("SKIP (partial): the sibling java InteropCli is not compiled yet.");
+                return;
+            }
+
+            using var relay = JavaNode.Spawn(PickPort());
+            using var exit = JavaNode.Spawn(PickPort());
+            using var cs = DotNetNode.Create();
+            _output.WriteLine($"java relay: {relay.Address}, java exit: {exit.Address}, c# node: {cs.Address}");
+
+            cs.Tunnel.WalkTo(relay.Address);
+            cs.Tunnel.WalkTo(exit.Address);
+            await WaitUntilAsync(
+                () => cs.Tunnel.GetPeers().Any(peer => peer.Address.Port == relay.Port)
+                      && cs.Tunnel.GetPeers().Any(peer => peer.Address.Port == exit.Port),
+                "the initiator verified both Java nodes on the tunnel overlay");
+            await WaitUntilAsync(() => cs.Tunnel.Candidates.Count >= 2,
+                "the tunnel candidates (with their peer flags) populated");
+
+            var exitPeer = cs.Tunnel.Candidates.Keys
+                .First(peer => peer.Address.Type == AddressType.Udpv4 && peer.Address.Port == exit.Port);
+            var circuit = cs.Tunnel.CreateCircuit(2, requiredExit: exitPeer);
+            Assert.NotNull(circuit);
+            await WaitUntilAsync(() => circuit!.State == Tunnel.CircuitStateReady,
+                "the 2-hop circuit through the Java relay and exit reached READY");
+
+            // Loopback UDP echo server (plain datagram echo, no IPv8).
+            var echoEndpoint = new UDPEndpoint(0, "127.0.0.1");
+            Assert.True(echoEndpoint.Open());
+            var received = new List<byte[]>();
+            echoEndpoint.AddListener(new EchoListener(echoEndpoint, received));
+            try
+            {
+                // The payload is DHT-shaped (bencoded dictionary, DataChecker.CouldBeDht) so the
+                // Java exit node's IsAllowed accepts it and the returning echo takes the
+                // raw-data path at the initiator.
+                var payload = new byte[30];
+                payload[0] = (byte)'d';
+                payload[1] = 0x01;
+                payload[29] = (byte)'e';
+                cs.Tunnel.SendData(circuit!.Hop.Address, circuit.CircuitId,
+                                   echoEndpoint.GetAddress(), Address.Zero, payload);
+
+                await WaitUntilAsync(() =>
+                {
+                    lock (received)
+                    {
+                        return received.Count > 0;
+                    }
+                }, "the loopback echo server received the datagram");
+                Assert.Equal(payload, received[0]);
+
+                await WaitUntilAsync(() =>
+                {
+                    lock (cs.Tunnel.RawData)
+                    {
+                        return cs.Tunnel.RawData.Any(entry => entry.Data.SequenceEqual(payload));
+                    }
+                }, "the echoed response returned through the tunnel byte-identically");
+
+                Assert.Null(cs.Tunnel.LastHandlerException);
+            }
+            finally
+            {
+                echoEndpoint.Close();
+            }
+        }
+
+        /// <summary>A plain loopback UDP echo listener (the B4 pattern).</summary>
+        private sealed class EchoListener : EndpointListener
+        {
+            private readonly UDPEndpoint _endpoint;
+            private readonly List<byte[]> _received;
+
+            public EchoListener(UDPEndpoint endpoint, List<byte[]> received) : base(endpoint)
+            {
+                _endpoint = endpoint;
+                _received = received;
+            }
+
+            public override void OnPacket(Packet packet)
+            {
+                lock (_received)
+                {
+                    _received.Add(packet.Data);
+                }
+                _endpoint.Send(packet.SourceAddress, packet.Data);
+            }
+        }
     }
 }
