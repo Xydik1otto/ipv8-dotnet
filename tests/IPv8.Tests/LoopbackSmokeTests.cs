@@ -32,21 +32,23 @@ namespace IPv8.Tests
             }
 
             protected override void OnIntroductionRequestCore(Peer peer, GlobalTimeDistributionPayload dist,
+                                                              Payload payload,
                                                               Address destinationAddress, Address sourceLanAddress,
                                                               long identifier)
             {
                 RequestsReceived++;
-                base.OnIntroductionRequestCore(peer, dist, destinationAddress, sourceLanAddress, identifier);
+                base.OnIntroductionRequestCore(peer, dist, payload, destinationAddress, sourceLanAddress, identifier);
             }
 
             protected override void OnIntroductionResponseCore(Peer peer, GlobalTimeDistributionPayload dist,
+                                                               Payload payload,
                                                                Address destinationAddress, Address sourceWanAddress,
                                                                Address lanIntroductionAddress,
                                                                Address wanIntroductionAddress, long identifier,
                                                                bool introSupportsNewStyle)
             {
                 ResponsesReceived++;
-                base.OnIntroductionResponseCore(peer, dist, destinationAddress, sourceWanAddress,
+                base.OnIntroductionResponseCore(peer, dist, payload, destinationAddress, sourceWanAddress,
                                                 lanIntroductionAddress, wanIntroductionAddress, identifier,
                                                 introSupportsNewStyle);
             }

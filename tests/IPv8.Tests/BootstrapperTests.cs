@@ -33,11 +33,12 @@ namespace IPv8.Tests
             }
 
             protected override void OnIntroductionRequestCore(Peer peer, GlobalTimeDistributionPayload dist,
+                                                              Payload payload,
                                                               Address destinationAddress, Address sourceLanAddress,
                                                               long identifier)
             {
                 RequestsReceived++;
-                base.OnIntroductionRequestCore(peer, dist, destinationAddress, sourceLanAddress,
+                base.OnIntroductionRequestCore(peer, dist, payload, destinationAddress, sourceLanAddress,
                                                identifier);
             }
         }

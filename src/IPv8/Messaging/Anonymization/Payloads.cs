@@ -985,7 +985,10 @@ namespace IPv8.Messaging.Anonymization
         public byte[] Pack(object[] args)
         {
             var accumulated = 0L;
-            if (args.Length > 0 && args[0] is IEnumerable<object> values)
+            // Accept ANY non-generic iterable (List<int>, HashSet<int>, int[], ...):
+            // IEnumerable<object> would reject List<int> (generic invariance) and
+            // silently pack an all-zero bitmask (py-ipv8 reduce(or, flags) accepts all).
+            if (args.Length > 0 && args[0] is System.Collections.IEnumerable values)
             {
                 foreach (var value in values)
                 {
