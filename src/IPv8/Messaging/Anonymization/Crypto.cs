@@ -36,7 +36,10 @@ namespace IPv8.Messaging.Anonymization
 
         /// <summary>
         /// Generate the shared secret from the received string and the given key
-        /// (crypto.py::generate_diffie_shared_secret).
+        /// (crypto.py::generate_diffie_shared_secret). NOTE (rust dh.rs ground truth):
+        /// PrivateKey.diffie_hellman(peer_pk, sk) == crypto_box_beforenm(peer_pk, sk) —
+        /// the shared-secret halves are BEFORENM outputs (clamp + X25519 + HSalsa20),
+        /// not raw X25519 outputs.
         /// </summary>
         public (byte[] SharedSecret, byte[] CryptPk, byte[] Auth) GenerateDiffieSharedSecret(
             byte[] dhReceived, PrivateKey key = null)
@@ -48,8 +51,9 @@ namespace IPv8.Messaging.Anonymization
             }
 
             var tmpKey = ECCrypto.Default.GenerateKey("curve25519");
-            var sharedSecret = Util.Concat(tmpKey.DiffieHellman(dhReceived),
-                                           key.DiffieHellman(dhReceived));
+            var sharedSecret = Util.Concat(
+                TunnelSessionCrypto.CryptoBoxBeforeNm(dhReceived, tmpKey.GetCryptSk()),
+                TunnelSessionCrypto.CryptoBoxBeforeNm(dhReceived, key.GetCryptSk()));
 
             var cryptPk = tmpKey.GetCryptPk();
             var auth = TunnelSessionCrypto.CryptoAuth(Util.Slice(sharedSecret, 0, 32), cryptPk);
@@ -59,13 +63,14 @@ namespace IPv8.Messaging.Anonymization
 
         /// <summary>
         /// Generate the shared secret based on the response to the shared string and our own
-        /// key (crypto.py::verify_and_generate_shared_secret).
+        /// key (crypto.py::verify_and_generate_shared_secret) — the beforenm composition of
+        /// rust dh.rs (see GenerateDiffieSharedSecret).
         /// </summary>
         public static byte[] VerifyAndGenerateSharedSecret(PrivateKey dhSecret, byte[] dhReceived,
                                                            byte[] auth, byte[] b)
         {
-            var s1 = dhSecret.DiffieHellman(dhReceived);
-            var s2 = dhSecret.DiffieHellman(b);
+            var s1 = TunnelSessionCrypto.CryptoBoxBeforeNm(dhReceived, dhSecret.GetCryptSk());
+            var s2 = TunnelSessionCrypto.CryptoBoxBeforeNm(b, dhSecret.GetCryptSk());
             var sharedSecret = Util.Concat(s1, s2);
 
             if (!TunnelSessionCrypto.CryptoAuthVerify(auth, Util.Slice(sharedSecret, 0, 32), dhReceived))

@@ -13,6 +13,7 @@ using IPv8.Dht;
 using IPv8.Keyvault;
 using IPv8.Messaging;
 using IPv8.Messaging.Anonymization;
+using IPv8.Messaging.Interfaces;
 using IPv8.Messaging.Interfaces.Udp;
 using IPv8.PeerDiscovery;
 using IPv8.Wallet;
@@ -147,6 +148,25 @@ namespace IPv8.Tests
             lock (InitLock)
             {
                 return random.Next(20000, 40000);
+            }
+        }
+
+        /// <summary>Dump the spawned Java nodes' recent stderr for cross-test diagnostics.</summary>
+        private void DumpJavaDiagnostics(string reason, params JavaNode[] nodes)
+        {
+            _output.WriteLine($"--- java diagnostics ({reason}) ---");
+            foreach (var node in nodes)
+            {
+                List<string> snapshot;
+                lock (node.Errors)
+                {
+                    snapshot = new List<string>(node.Errors);
+                }
+                _output.WriteLine($"node {node.Address}: {snapshot.Count} stderr line(s)");
+                foreach (var line in snapshot.TakeLast(12))
+                {
+                    _output.WriteLine($"  {node.Address.Port}: {line}");
+                }
             }
         }
 
@@ -435,8 +455,31 @@ namespace IPv8.Tests
             public readonly List<(Circuit Circuit, Address Origin, byte[] Data)> RawData =
                 new List<(Circuit, Address, byte[])>();
 
+            /// <summary>Every packet handed to this community (for live interop diagnostics).</summary>
+            public readonly List<byte[]> Incoming = new List<byte[]>();
+
+            /// <summary>Every FINAL wire packet we sent (post crypto endpoint).</summary>
+            public readonly List<byte[]> SentWires = new List<byte[]>();
+
             public TestTunnelCommunity(TunnelSettings settings) : base(settings)
             {
+            }
+
+            protected override ICryptoEndpoint CreateCryptoEndpoint(Endpoint endpoint)
+            {
+                Sniffer = new SniffingCryptoEndpoint(endpoint);
+                return Sniffer;
+            }
+
+            public SniffingCryptoEndpoint Sniffer { get; private set; }
+
+            public override void OnPacket(Packet packet)
+            {
+                lock (Incoming)
+                {
+                    Incoming.Add(packet.Data);
+                }
+                base.OnPacket(packet);
             }
 
             public override void OnRawData(Circuit circuit, Address origin, byte[] data)
@@ -444,6 +487,23 @@ namespace IPv8.Tests
                 lock (RawData)
                 {
                     RawData.Add((circuit, origin, data));
+                }
+            }
+
+            public sealed class SniffingCryptoEndpoint : PythonCryptoEndpoint
+            {
+                public SniffingCryptoEndpoint(Endpoint endpoint) : base(endpoint)
+                {
+                }
+
+                public readonly List<byte[]> Wires = new List<byte[]>();
+
+                protected override void OnWireSent(byte[] packet)
+                {
+                    lock (Wires)
+                    {
+                        Wires.Add(packet);
+                    }
                 }
             }
         }
@@ -551,6 +611,94 @@ namespace IPv8.Tests
             Assert.True(findLine.StartsWith("FOUND ", StringComparison.Ordinal),
                 $"the Java node could not find the C#-stored value: {findLine}");
             Assert.Equal(valueTwo, Util.Unhex(findLine.Substring("FOUND ".Length).Trim()));
+        }
+
+        // ---------------------------------------------------------------------- C3: tunnel
+
+        /// <summary>
+        /// C3: the C# initiator (in-process) builds a 2-hop circuit through TWO spawned Java
+        /// nodes (first = relay, second = exit with EXIT_BT); a PING over the circuit returns
+        /// a PONG through the tunnel — all cell handshakes cross the language boundary live.
+        /// </summary>
+        [Fact]
+        public async Task C3_Tunnel_Interop_TwoHop_Circuit_Through_Java_Relay_And_Exit()
+        {
+            if (!JavaCliAvailable())
+            {
+                _output.WriteLine("SKIP (partial): the sibling java InteropCli is not compiled yet.");
+                return;
+            }
+
+            using var relay = JavaNode.Spawn(PickPort());
+            using var exit = JavaNode.Spawn(PickPort());
+            using var cs = DotNetNode.Create();
+            _output.WriteLine($"java relay: {relay.Address}, java exit: {exit.Address}, c# node: {cs.Address}");
+
+            // The initiator walks BOTH Java nodes on the tunnel overlay; their intro
+            // responses advertise their relay/exit peer flags through the extra bytes.
+            cs.Tunnel.WalkTo(relay.Address);
+            cs.Tunnel.WalkTo(exit.Address);
+            await WaitUntilAsync(
+                () => cs.Tunnel.GetPeers().Any(peer => peer.Address.Port == relay.Port)
+                      && cs.Tunnel.GetPeers().Any(peer => peer.Address.Port == exit.Port),
+                "the initiator verified both Java nodes on the tunnel overlay");
+            await WaitUntilAsync(() => cs.Tunnel.Candidates.Count >= 2,
+                "the tunnel candidates (with their peer flags) populated");
+
+            var exitPeer = cs.Tunnel.Candidates.Keys
+                .First(peer => peer.Address.Type == AddressType.Udpv4 && peer.Address.Port == exit.Port);
+            var circuit = cs.Tunnel.CreateCircuit(2, requiredExit: exitPeer);
+            Assert.NotNull(circuit);
+            try
+            {
+                await WaitUntilAsync(() => circuit!.State == Tunnel.CircuitStateReady,
+                    "the 2-hop circuit through the Java relay and exit reached READY");
+            }
+            catch (TimeoutException)
+            {
+                DumpJavaDiagnostics("C3 circuit build timeout", relay, exit);
+                _output.WriteLine($"circuit state: {circuit!.State}, hops: {circuit.Hops.Count}, "
+                                  + $"cid: {circuit.CircuitId}");
+                foreach (var candidate in cs.Tunnel.Candidates)
+                {
+                    _output.WriteLine($"candidate {candidate.Key.Address.Port}: flags=[{string.Join(",", candidate.Value)}]");
+                }
+                lock (cs.Tunnel.RawData)
+                {
+                    _output.WriteLine($"raw data received: {cs.Tunnel.RawData.Count}");
+                }
+                List<byte[]> incoming;
+                lock (cs.Tunnel.Incoming)
+                {
+                    incoming = new List<byte[]>(cs.Tunnel.Incoming);
+                }
+                _output.WriteLine($"tunnel packets received by the C# initiator: {incoming.Count}");
+                foreach (var packet in incoming.TakeLast(6))
+                {
+                    _output.WriteLine($"  IN  {Util.Hex(packet)}");
+                }
+                List<byte[]> sent;
+                lock (cs.Tunnel.Sniffer.Wires)
+                {
+                    sent = new List<byte[]>(cs.Tunnel.Sniffer.Wires);
+                }
+                _output.WriteLine($"tunnel wire packets sent by the C# initiator: {sent.Count}");
+                foreach (var packet in sent.TakeLast(4))
+                {
+                    _output.WriteLine($"  OUT {Util.Hex(packet)}");
+                }
+                throw;
+            }
+
+            Assert.Equal(2, circuit!.Hops.Count);
+            Assert.All(circuit.Hops, hop => Assert.NotNull(hop.Keys));
+
+            // A PING over the circuit returns a PONG through the Java relay.
+            var activityBefore = circuit.LastActivity;
+            cs.Tunnel.DoPing();
+            await WaitUntilAsync(() => circuit.LastActivity > activityBefore,
+                "the circuit heart beat on the returned PONG");
+            Assert.Null(cs.Tunnel.LastHandlerException);
         }
     }
 }

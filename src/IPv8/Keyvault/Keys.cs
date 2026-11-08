@@ -49,6 +49,12 @@ namespace IPv8.Keyvault
         /// Return the raw public key bytes suitable for encryption/DH (e.g., X25519 bytes).
         /// </summary>
         public abstract byte[] GetCryptPk();
+
+        /// <summary>
+        /// Return the raw secret key bytes suitable for encryption/DH (e.g., X25519 scalar).
+        /// rust dh.rs reads this for crypto_box_beforenm based diffie_hellman.
+        /// </summary>
+        public abstract byte[] GetCryptSk();
     }
 
     /// <summary>Interface for a public key.</summary>
@@ -200,5 +206,7 @@ namespace IPv8.Keyvault
         }
 
         public override byte[] GetCryptPk() => Pub().GetCryptPk();
+
+        public override byte[] GetCryptSk() => Util.CopyOf(_cryptSk);
     }
 }

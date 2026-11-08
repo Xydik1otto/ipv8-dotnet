@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using IPv8.Keyvault;
 using IPv8.Messaging.Anonymization;
 using Org.BouncyCastle.Crypto.Agreement;
 using Org.BouncyCastle.Crypto.Parameters;
@@ -334,6 +335,42 @@ namespace IPv8.Tests
             var candidatesBin = sessionKeys.DecryptStr(Util.Unhex(RefCandidatesEnc), TunnelDirection.Forward);
             Assert.Equal(Vectors3.HexString(Vectors3.Section("created_handshake"), "candidates_bin_hex"),
                          Vectors3.Hex(candidatesBin));
+        }
+
+        /// <summary>
+        /// The LIBRARY's handshake functions must implement the rust dh.rs beforenm
+        /// composition symmetrically: the hop's generate_diffie_shared_secret and the
+        /// initiator's verify_and_generate_shared_secret must agree (this is exactly the
+        /// property the live cross-language handshake depends on).
+        /// </summary>
+        [Fact]
+        public void Handshake_Functions_Agree_On_Beforenm_Composition()
+        {
+            var initiatorKey = (PrivateKey)ECCrypto.Default.KeyFromPrivateBin(Util.Unhex(
+                "4c69624e61434c534b3a77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"
+                + "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            var hopKey = (PrivateKey)ECCrypto.Default.KeyFromPrivateBin(Util.Unhex(
+                "4c69624e61434c534b3a5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"
+                + "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"));
+
+            // Hop side: the received DH part is the initiator's ephemeral crypt pk.
+            var hopCrypto = new TunnelCrypto();
+            hopCrypto.Initialize(hopKey);
+            var (shared, cryptPk, auth) = hopCrypto.GenerateDiffieSharedSecret(initiatorKey.GetCryptPk());
+            Assert.Equal(64, shared.Length);
+
+            // Initiator side: verify against the hop's ephemeral pk + the hop's own crypt pk.
+            var initShared = TunnelCrypto.VerifyAndGenerateSharedSecret(
+                initiatorKey, cryptPk, auth, hopKey.GetCryptPk());
+            Assert.Equal(shared, initShared);
+
+            // Both sides expand identical session keys.
+            var hopKeys = TunnelCrypto.GenerateSessionKeys(shared);
+            var initKeys = TunnelCrypto.GenerateSessionKeys(initShared);
+            Assert.Equal(hopKeys.KeyForward, initKeys.KeyForward);
+            Assert.Equal(hopKeys.KeyBackward, initKeys.KeyBackward);
+            Assert.Equal(hopKeys.SaltForward, initKeys.SaltForward);
+            Assert.Equal(hopKeys.SaltBackward, initKeys.SaltBackward);
         }
     }
 }
