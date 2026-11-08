@@ -66,6 +66,10 @@ internal static class Program
     // walk target; the DHT/tunnel/attestation ids come from the communities' golden constants).
     private static readonly byte[] DiscoveryCommunityId = Util.Unhex("7e313685c1912a141279f8248fc8db5899c5df5a");
 
+    // The Phase 1a golden-fixture community id (ipv8-java GoldenFixtures.GOLDEN_COMMUNITY_ID):
+    // the sibling interop node walks with both discovery ids, so we host both.
+    private static readonly byte[] GoldenDiscoveryCommunityId = Util.Unhex("67f43dab165071e740b5856d46375d7416797f0b");
+
     private static readonly TimeSpan WalkPeerTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan CircuitTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PongTimeout = TimeSpan.FromSeconds(15);
@@ -179,6 +183,7 @@ internal static class Program
         private readonly UDPEndpoint _endpoint;
         private readonly List<Community> _communities = new List<Community>();
         private readonly PlainCommunity _discovery;
+        private readonly PlainCommunity _goldenDiscovery;
         private readonly DhtCommunity _dht;
         private readonly CliTunnelCommunity _tunnel;
         private readonly AttestationCommunity _attestation;
@@ -199,6 +204,9 @@ internal static class Program
             _discovery = new PlainCommunity(
                 new CommunitySettings(DiscoveryCommunityId, myPeer, _endpoint, new Network()),
                 DiscoveryCommunityId);
+            _goldenDiscovery = new PlainCommunity(
+                new CommunitySettings(GoldenDiscoveryCommunityId, myPeer, _endpoint, new Network()),
+                GoldenDiscoveryCommunityId);
             _dht = new DhtCommunity(
                 new CommunitySettings(DhtCommunity.FixedCommunityId, myPeer, _endpoint, new Network()));
             _tunnel = new CliTunnelCommunity(new TunnelSettings
@@ -217,7 +225,10 @@ internal static class Program
                 WorkingDirectory = ":memory:"
             });
 
-            _communities.AddRange(new Community[] { _discovery, _dht, _tunnel, _attestation });
+            _communities.AddRange(new Community[]
+            {
+                _discovery, _goldenDiscovery, _dht, _tunnel, _attestation
+            });
             foreach (var community in _communities)
             {
                 community.MyEstimatedLan = address;
