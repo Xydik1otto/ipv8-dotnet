@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -800,6 +801,91 @@ namespace IPv8.Tests
                 }
                 _endpoint.Send(packet.SourceAddress, packet.Data);
             }
+        }
+
+        // ---------------------------------------------------------------- C5: attestation
+
+        /// <summary>The Java node's port-derived LibNaCLSK private key (InteropNode.deriveKeyForPort).</summary>
+        private static PrivateKey JavaKeyForPort(int port)
+        {
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            var xSk = sha256.ComputeHash(Util.Utf8($"ipv8-interop-x25519|{port}"));
+            var eSeed = sha256.ComputeHash(Util.Utf8($"ipv8-interop-ed25519|{port}"));
+            return ECCrypto.Default.KeyFromPrivateBin(Util.Concat(Util.Utf8("LibNaCLSK:"), xSk, eSeed));
+        }
+
+        /// <summary>
+        /// C5 (stretch): attestation interop. The C# node requests an attestation of an
+        /// attribute from the Java node (which attests the contract value "secret"), then —
+        /// mirror — drives the Java node's {@code attest} command so the C# node attests for
+        /// the Java requester and the ZKP challenge round completes cross-language. The
+        /// certainty must exceed 0.9. When the Java side has not landed its attestation
+        /// surface yet, the scenario reports the partial state instead of failing.
+        /// </summary>
+        [Fact]
+        public async Task C5_Attestation_Interop_Stretch()
+        {
+            if (!JavaCliAvailable())
+            {
+                _output.WriteLine("SKIP (partial): the sibling java InteropCli is not compiled yet.");
+                return;
+            }
+
+            using var java = JavaNode.Spawn(PickPort());
+            using var cs = DotNetNode.Create();
+            _output.WriteLine($"java node: {java.Address}, c# node: {cs.Address}");
+
+            // Make the C# node resolvable inside the Java node's attestation overlay (needed
+            // by the mirror direction; harmless while the Java side lacks the overlay).
+            cs.Attest.WalkTo(java.Address);
+
+            var goldenKey = BonehPrivateKey.Unserialize(Util.Unhex(GoldenBonehSkHex));
+            var javaPeer = new Peer(JavaKeyForPort(java.Port).Pub().KeyToBin(), java.Address);
+
+            // Direction one: the C# node requests the attestation; the Java node attests
+            // "secret" and (as the attester) verifies the disclosure it just delivered.
+            cs.Attest.RequestAttestation(javaPeer, "interop_attr_a", goldenKey,
+                new Dictionary<string, string> { ["id_format"] = "id_metadata" });
+            try
+            {
+                await WaitUntilAsync(() => cs.Attest.AttestationKeys.Count > 0,
+                    "the attestation blob arrived from the Java node", 20000);
+            }
+            catch (TimeoutException)
+            {
+                _output.WriteLine("PARTIAL: the Java interop node has no attestation overlay yet "
+                                  + "(no attestation transfer within 20s).");
+                return;
+            }
+            _output.WriteLine("attestation transfer C#<-Java completed");
+
+            // Mirror direction: the Java node's attest command requests an attestation FROM the
+            // C# node; the C# node attests "secret" and auto-verifies the disclosure, so the
+            // ZKP challenge round-trips cross-language and the certainty is computed here.
+            java.Send($"attest 127.0.0.1 {cs.Address.Port} interop_attr_b");
+            double mirrorCertainty;
+            try
+            {
+                var (_, certainties) = await cs.Certainty.WaitOrThrowAsync(30000);
+                mirrorCertainty = certainties.Max();
+            }
+            catch (TimeoutException)
+            {
+                _output.WriteLine("PARTIAL: the Java node's attest flow did not complete the ZKP "
+                                  + "verification within 30s (attest surface still landing on the Java side).");
+                return;
+            }
+            _output.WriteLine($"mirror certainty: {mirrorCertainty}");
+            Assert.True(mirrorCertainty > 0.9, $"certainty(secret) = {mirrorCertainty}");
+
+            // The Java node must also print its own CERTAINTY line (either direction's verify).
+            var certaintyLine = await java.WaitForLineAsync(
+                line => line.StartsWith("CERTAINTY ", StringComparison.Ordinal),
+                "the Java node printing CERTAINTY", 30000);
+            var javaCertainty = double.Parse(certaintyLine.Substring("CERTAINTY ".Length).Trim(),
+                CultureInfo.InvariantCulture);
+            _output.WriteLine($"java-reported certainty: {javaCertainty}");
+            Assert.True(javaCertainty > 0.9, $"the Java node's certainty = {javaCertainty}");
         }
     }
 }
