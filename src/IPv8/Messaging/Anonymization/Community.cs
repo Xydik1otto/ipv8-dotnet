@@ -205,8 +205,10 @@ namespace IPv8.Messaging.Anonymization
         /// </summary>
         public void DoCircuits()
         {
-            foreach (var (circuitLength, numCircuits) in _circuitsNeeded)
+            foreach (var needed in _circuitsNeeded)
             {
+                var circuitLength = needed.Key;
+                var numCircuits = needed.Value;
                 var numToBuild = Math.Max(0, numCircuits - FindCircuits(state: null, hops: circuitLength).Count);
                 if (numToBuild == 0)
                 {

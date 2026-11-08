@@ -169,7 +169,7 @@ namespace IPv8.Messaging.Anonymization
             {
                 if (_hops.Count > 0)
                 {
-                    return _hops[^1].Flags;
+                    return _hops[_hops.Count - 1].Flags;
                 }
                 return new List<int>();
             }

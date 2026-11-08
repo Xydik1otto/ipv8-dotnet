@@ -169,14 +169,14 @@ namespace IPv8.Messaging.Anonymization
             };
         }
 
-        public new byte[] CreateIntroductionRequest(Address socketAddress, byte[] extraBytes = null,
+        public override byte[] CreateIntroductionRequest(Address socketAddress, byte[] extraBytes = null,
                                                     bool newStyle = false, byte[] prefix = null)
         {
             // Piggyback introduction points onto introduction requests.
             return base.CreateIntroductionRequest(socketAddress, GetSeederPks(), newStyle);
         }
 
-        public new byte[] CreateIntroductionResponse(Address lanSocketAddress, Address socketAddress,
+        public override byte[] CreateIntroductionResponse(Address lanSocketAddress, Address socketAddress,
                                                      long identifier, Peer introduction = null,
                                                      byte[] extraBytes = null, byte[] prefix = null,
                                                      bool newStyle = false)
