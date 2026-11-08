@@ -502,5 +502,55 @@ namespace IPv8.Tests
             var announcedMid = Util.Unhex(peerLine.Substring("PEER ".Length).Trim());
             Assert.Equal(cs.MyPeer.Mid, announcedMid);
         }
+
+        // ------------------------------------------------------------------------- C2: DHT
+
+        /// <summary>
+        /// C2: the Java node stores a value, the C# node finds it through the DHT — and the
+        /// mirror direction: the C# node stores, the Java node's {@code find} prints
+        /// {@code FOUND <value_hex>} with a byte-identical value.
+        /// </summary>
+        [Fact]
+        public async Task C2_Dht_Interop_Java_Stores_DotNet_Finds_And_Mirror()
+        {
+            if (!JavaCliAvailable())
+            {
+                _output.WriteLine("SKIP (partial): the sibling java InteropCli is not compiled yet.");
+                return;
+            }
+
+            using var java = JavaNode.Spawn(PickPort());
+            using var cs = DotNetNode.Create();
+            _output.WriteLine($"java node: {java.Address}, c# node: {cs.Address}");
+
+            // Establish DHT contact: the intro exchange populates both DHT routing tables
+            // (the Java side's through the incoming request, ours through the response).
+            cs.Dht.WalkTo(java.Address);
+            await WaitUntilAsync(() => cs.Dht.GetPeers().Count > 0,
+                "the C# DHT community verified the Java node");
+            var javaMid = JavaMidForPort(java.Port);
+            await WaitUntilAsync(() => cs.RoutingNodeFor(javaMid, java.Address) != null,
+                "the C# DHT routing table learned the Java node");
+
+            // Direction one: the Java node stores, the C# node finds.
+            var keyOne = Util.Unhex(new string('a', 40));
+            var valueOne = Util.Utf8("interop-value java->csharp");
+            java.Send($"store {Util.Hex(keyOne)} {Util.Hex(valueOne)}");
+            await java.WaitForLineAsync(line => line == "STORED", "the Java node printing STORED");
+            var foundOne = await cs.Dht.FindValuesAsync(keyOne);
+            Assert.Contains(foundOne, pair => pair.Data.SequenceEqual(valueOne));
+
+            // Mirror direction: the C# node stores, the Java node finds.
+            var keyTwo = Util.Unhex(new string('b', 40));
+            var valueTwo = Util.Utf8("interop-value csharp->java");
+            await cs.Dht.StoreValueAsync(keyTwo, valueTwo);
+            java.Send($"find {Util.Hex(keyTwo)}");
+            var findLine = await java.WaitForLineAsync(
+                line => line.StartsWith("FOUND ", StringComparison.Ordinal) || line == "NOTFOUND",
+                "the Java node printing FOUND/NOTFOUND");
+            Assert.True(findLine.StartsWith("FOUND ", StringComparison.Ordinal),
+                $"the Java node could not find the C#-stored value: {findLine}");
+            Assert.Equal(valueTwo, Util.Unhex(findLine.Substring("FOUND ".Length).Trim()));
+        }
     }
 }
