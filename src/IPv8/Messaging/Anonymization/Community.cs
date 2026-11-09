@@ -102,6 +102,9 @@ namespace IPv8.Messaging.Anonymization
         private readonly Dictionary<int, CellHandler> _decodeMapPrivate =
             new Dictionary<int, CellHandler>();
 
+        /// <summary>The cell decode map (py decode_map_private; public for test access).</summary>
+        public IReadOnlyDictionary<int, CellHandler> DecodeMapPrivate => _decodeMapPrivate;
+
         /// <summary>Wanted circuits per hop count (py defaultdict(int)).</summary>
         private readonly Dictionary<int, int> _circuitsNeeded = new Dictionary<int, int>();
 
@@ -357,6 +360,14 @@ namespace IPv8.Messaging.Anonymization
         /// </summary>
         public Circuit CreateCircuit(int goalHops, string ctype = Tunnel.CircuitTypeData,
                                      int[] exitFlags = null, Peer requiredExit = null, byte[] infoHash = null)
+        {
+            return CreateCircuitImpl(goalHops, ctype, exitFlags, requiredExit, infoHash);
+        }
+
+        /// <summary>Overridable circuit creation core (hidden services observe the hop count).</summary>
+        protected virtual Circuit CreateCircuitImpl(int goalHops, string ctype = Tunnel.CircuitTypeData,
+                                                    int[] exitFlags = null, Peer requiredExit = null,
+                                                    byte[] infoHash = null)
         {
             Log.TraceEvent(TraceEventType.Information, 0,
                 $"Creating a new circuit of length {goalHops} (type: {ctype})");

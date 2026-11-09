@@ -559,7 +559,7 @@ namespace IPv8
         }
 
         /// <summary>The last exception thrown by a packet handler (test/debug aid).</summary>
-        public Exception LastHandlerException { get; private set; }
+        public Exception LastHandlerException { get; protected set; }
 
         private bool MatchesPrefix(byte[] data, byte[] prefix)
         {
