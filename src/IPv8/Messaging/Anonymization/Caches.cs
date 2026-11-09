@@ -24,6 +24,15 @@ namespace IPv8.Messaging.Anonymization
         }
     }
 
+    /// <summary>
+    /// The hidden-service swarm registry (py: ``HiddenTunnelCommunity.swarms``). The HS caches
+    /// consult it on timeout without coupling the base tunnel module to the hidden community.
+    /// </summary>
+    public interface IHiddenSwarmRegistry
+    {
+        Dictionary<byte[], Swarm> Swarms { get; }
+    }
+
     /// <summary>Used to track outstanding create messages (caches.py::CreateRequestCache).</summary>
     public sealed class CreateRequestCache : RandomNumberCacheWithName
     {
@@ -224,7 +233,13 @@ namespace IPv8.Messaging.Anonymization
         public override void OnTimeout()
         {
             // We remove the introduction point if we don't get a response.
-            // (Only relevant to hidden services, which own the swarms dictionary.)
+            if (Community is IHiddenSwarmRegistry registry
+                && registry.Swarms.TryGetValue(InfoHash, out var swarm)
+                && Target != null)
+            {
+                // This introduction point did not respond in time, so drop it.
+                swarm.RemoveIntroPoint(Target);
+            }
         }
     }
 

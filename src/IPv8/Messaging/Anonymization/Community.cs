@@ -203,7 +203,7 @@ namespace IPv8.Messaging.Anonymization
         /// <summary>
         /// Check if we have sufficient circuits and attempt to create new circuits if we have too little.
         /// </summary>
-        public void DoCircuits()
+        public virtual void DoCircuits()
         {
             foreach (var needed in _circuitsNeeded)
             {
@@ -329,7 +329,7 @@ namespace IPv8.Messaging.Anonymization
         }
 
         /// <summary>Get the maximum time (in seconds) that the given circuit is allowed to exist.</summary>
-        public double GetMaxTime(long circuitId)
+        public virtual double GetMaxTime(long circuitId)
         {
             return Settings.MaxTime;
         }
@@ -525,8 +525,8 @@ namespace IPv8.Messaging.Anonymization
         }
 
         /// <summary>Remove a circuit and optionally send a destroy message.</summary>
-        public void RemoveCircuit(long circuitId, string additionalInfo = "", bool removeNow = false,
-                                  object destroy = null)
+        public virtual void RemoveCircuit(long circuitId, string additionalInfo = "", bool removeNow = false,
+                                          object destroy = null)
         {
             RunAnonymousIgnoringErrors("remove_circuit",
                 () => RemoveCircuitAsync(circuitId, additionalInfo, removeNow, destroy));
@@ -623,8 +623,8 @@ namespace IPv8.Messaging.Anonymization
         }
 
         /// <summary>Remove an exit socket. Send a destroy message if necessary.</summary>
-        public void RemoveExitSocket(long circuitId, string additionalInfo = "", bool removeNow = false,
-                                     object destroy = null)
+        public virtual void RemoveExitSocket(long circuitId, string additionalInfo = "", bool removeNow = false,
+                                             object destroy = null)
         {
             RunAnonymousIgnoringErrors("remove_exit_socket",
                 () => RemoveExitSocketAsync(circuitId, additionalInfo, removeNow, destroy));
@@ -1380,7 +1380,7 @@ namespace IPv8.Messaging.Anonymization
         }
 
         /// <summary>Ping circuits. Pings are only sent to the first hop, subsequent hops will relay the ping.</summary>
-        public void DoPing(int[] exclude = null)
+        public virtual void DoPing(int[] exclude = null)
         {
             var excluded = new HashSet<long>();
             if (exclude != null)

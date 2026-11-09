@@ -30,6 +30,7 @@ namespace IPv8.Messaging.Anonymization
         /// anything else than IPv8 messages, used for setting up end-to-end circuits.
         /// </summary>
         public const string CircuitTypeIpSeeder = "IP_SEEDER";
+        public const string CircuitTypeIpDownloader = "IP_DOWNLOADER";
         public const string CircuitTypeRpSeeder = "RP_SEEDER";
         public const string CircuitTypeRpDownloader = "RP_DOWNLOADER";
 
@@ -235,13 +236,20 @@ namespace IPv8.Messaging.Anonymization
     {
         public Circuit Circuit { get; }
         public byte[] Cookie { get; }
+
+        /// <summary>
+        /// The rendezvous address, set once the rendezvous is established. Unset is represented
+        /// by the zero address (C# structs cannot hold py's None).
+        /// </summary>
         public Address Address { get; set; }
+
         public TaskCompletionSource<RendezvousPoint> Ready { get; } = new TaskCompletionSource<RendezvousPoint>();
 
         public RendezvousPoint(Circuit circuit, byte[] cookie)
         {
             Circuit = circuit;
             Cookie = cookie;
+            Address = Address.Zero;
         }
     }
 
@@ -267,5 +275,286 @@ namespace IPv8.Messaging.Anonymization
 
         public override int GetHashCode()
             => Util.BytesHashCode(SeederPk) * 31 + Peer.GetHashCode();
+    }
+
+    /// <summary>
+    /// A group of circuit exits that organizes around an SHA-1 (tunnel.py::Swarm).
+    /// </summary>
+    public sealed class Swarm
+    {
+        /// <summary>Attempt to find introduction points for the swarm (py Swarm.lookup_func).</summary>
+        public delegate Task<List<IntroductionPoint>> LookupFunc(byte[] infoHash, IntroductionPoint target, int hops);
+
+        public byte[] InfoHash { get; }
+        public int Hops { get; }
+        public LookupFunc LookupFuncDelegate { get; }
+        public PrivateKey SeederSk { get; }
+        public double MaxIpAge { get; }
+        public double MinDhtLookupInterval { get; }
+        public double MaxDhtLookupInterval { get; }
+
+        public List<IntroductionPoint> IntroPoints { get; } = new List<IntroductionPoint>();
+
+        /// <summary>RP circuit → the introduction point it connected through (py Swarm.connections).</summary>
+        public Dictionary<long, ConnectionEntry> Connections { get; } = new Dictionary<long, ConnectionEntry>();
+
+        public double LastLookup { get; set; }
+
+        public double LastDhtResponse { get; set; }
+
+        /// <summary>[bytes up, bytes down] accumulated from removed connections (py transfer_history).</summary>
+        public long[] TransferHistory { get; } = new long[2];
+
+        public Swarm(byte[] infoHash, int hops, LookupFunc lookupFunc, PrivateKey seederSk = null,
+                     double maxIpAge = 180.0, double minDhtLookupInterval = 300.0,
+                     double maxDhtLookupInterval = 120.0)
+        {
+            InfoHash = infoHash;
+            Hops = hops;
+            LookupFuncDelegate = lookupFunc ?? throw new ArgumentNullException(nameof(lookupFunc));
+            SeederSk = seederSk;
+            MaxIpAge = maxIpAge;
+            MinDhtLookupInterval = minDhtLookupInterval;
+            MaxDhtLookupInterval = maxDhtLookupInterval;
+        }
+
+        /// <summary>Whether we are seeding data in this swarm (py Swarm.seeding).</summary>
+        public bool Seeding => SeederSk != null;
+
+        /// <summary>The READY e2e circuits in this swarm (py Swarm._active_circuits).</summary>
+        public List<Circuit> ActiveCircuits
+        {
+            get
+            {
+                var result = new List<Circuit>();
+                foreach (var connection in Connections.Values)
+                {
+                    if (connection.Circuit.State == Tunnel.CircuitStateReady && connection.Circuit.E2e)
+                    {
+                        result.Add(connection.Circuit);
+                    }
+                }
+                return result;
+            }
+        }
+
+        /// <summary>Add a newly known circuit to this swarm (py Swarm.add_connection).</summary>
+        public void AddConnection(Circuit rpCircuit, IntroductionPoint introPointUsed)
+        {
+            if (!Connections.ContainsKey(rpCircuit.CircuitId))
+            {
+                Connections[rpCircuit.CircuitId] = new ConnectionEntry(rpCircuit, introPointUsed);
+            }
+        }
+
+        /// <summary>
+        /// Remove the given circuit from this swarm, if we manage it. This does not close the
+        /// circuit (py Swarm.remove_connection).
+        /// </summary>
+        public bool RemoveConnection(Circuit rpCircuit)
+        {
+            if (Connections.Remove(rpCircuit.CircuitId))
+            {
+                TransferHistory[0] += rpCircuit.BytesUp;
+                TransferHistory[1] += rpCircuit.BytesDown;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Check if the given public key is in the swarm (py Swarm.has_connection).</summary>
+        public bool HasConnection(byte[] seederPk)
+        {
+            foreach (var connection in Connections.Values)
+            {
+                if (Util.BytesEqual(connection.IntroPoint.SeederPk, seederPk))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Get the number of circuits we have in this swarm (py Swarm.get_num_connections).</summary>
+        public int GetNumConnections() => ActiveCircuits.Count;
+
+        /// <summary>
+        /// Get the number of circuits we don't have yet, but know of, in this swarm
+        /// (py Swarm.get_num_connections_incomplete).
+        /// </summary>
+        public int GetNumConnectionsIncomplete() => Connections.Count - GetNumConnections();
+
+        /// <summary>
+        /// Add an available introduction point to this swarm. Returns the introduction point we
+        /// should use (not necessarily the one we just added) (py Swarm.add_intro_point).
+        /// </summary>
+        public IntroductionPoint AddIntroPoint(IntroductionPoint ip)
+        {
+            IntroductionPoint oldIp = null;
+            foreach (var existing in IntroPoints)
+            {
+                if (existing.Equals(ip))
+                {
+                    oldIp = existing;
+                    break;
+                }
+            }
+
+            if (oldIp != null)
+            {
+                oldIp.LastSeen = Util.NowEpoch();
+            }
+            else
+            {
+                IntroPoints.Add(ip);
+            }
+
+            return oldIp ?? ip;
+        }
+
+        /// <summary>Cleanup old introduction points (py Swarm.remove_old_intro_points).</summary>
+        public void RemoveOldIntroPoints()
+        {
+            var now = Util.NowEpoch();
+            var used = new List<IntroductionPoint>();
+            foreach (var connection in Connections.Values)
+            {
+                if (connection.Circuit.State == Tunnel.CircuitStateReady && connection.Circuit.E2e)
+                {
+                    used.Add(connection.IntroPoint);
+                }
+            }
+            IntroPoints.RemoveAll(ip => !(ip.LastSeen + MaxIpAge >= now || used.Contains(ip)));
+        }
+
+        /// <summary>Remove the given introduction point from this swarm (py Swarm.remove_intro_point).</summary>
+        public void RemoveIntroPoint(IntroductionPoint ip) => IntroPoints.Remove(ip);
+
+        /// <summary>
+        /// Lookup introduction points, possibly those that match the given introduction point.
+        /// Returns null when no lookup was performed (py Swarm.lookup).
+        /// </summary>
+        public async Task<List<IntroductionPoint>> Lookup(IntroductionPoint target = null)
+        {
+            // Are we doing a manual lookup?
+            if (target != null)
+            {
+                return OnLookupSuccess(await LookupFuncDelegate(InfoHash, target, Hops));
+            }
+
+            var now = Util.NowEpoch();
+            RemoveOldIntroPoints();
+            LastLookup = now;
+            if (now - LastDhtResponse > MinDhtLookupInterval
+                || (IntroPoints.Count == 0 && now - LastDhtResponse > MaxDhtLookupInterval))
+            {
+                return OnLookupSuccess(await LookupFuncDelegate(InfoHash, null, Hops));
+            }
+
+            if (IntroPoints.Count > 0)
+            {
+                var results = new List<IntroductionPoint>();
+                foreach (var ip in IntroPoints)
+                {
+                    // py gather(*tasks, return_exceptions=True): failures are ignored.
+                    List<IntroductionPoint> part;
+                    try
+                    {
+                        part = await LookupFuncDelegate(InfoHash, ip, Hops);
+                    }
+                    catch (Exception)
+                    {
+                        continue;
+                    }
+                    if (part != null)
+                    {
+                        results.AddRange(part);
+                    }
+                }
+                return OnLookupSuccess(results);
+            }
+            return null;
+        }
+
+        private List<IntroductionPoint> OnLookupSuccess(List<IntroductionPoint> ips)
+        {
+            foreach (var ip in ips)
+            {
+                if (ip != null && ip.Source == Tunnel.PeerSourceDht)
+                {
+                    LastDhtResponse = Util.NowEpoch();
+                    break;
+                }
+            }
+            return ips;
+        }
+
+        /// <summary>Get the number of different seeder public keys in this swarm (py get_num_seeders).</summary>
+        public int GetNumSeeders()
+        {
+            var seederPks = new List<byte[]>();
+            foreach (var ip in IntroPoints)
+            {
+                seederPks.Add(ip.SeederPk);
+            }
+            foreach (var connection in Connections.Values)
+            {
+                seederPks.Add(connection.IntroPoint.SeederPk);
+            }
+            // Count DISTINCT keys (byte-exact comparison, mirroring the py set of bytes).
+            var distinct = new List<byte[]>();
+            foreach (var pk in seederPks)
+            {
+                var known = false;
+                foreach (var seen in distinct)
+                {
+                    if (Util.BytesEqual(seen, pk))
+                    {
+                        known = true;
+                        break;
+                    }
+                }
+                if (!known)
+                {
+                    distinct.Add(pk);
+                }
+            }
+            return distinct.Count;
+        }
+
+        /// <summary>Get the total number of bytes uploaded in this swarm (py get_total_up).</summary>
+        public long GetTotalUp()
+        {
+            var total = TransferHistory[0];
+            foreach (var circuit in ActiveCircuits)
+            {
+                total += circuit.BytesUp;
+            }
+            return total;
+        }
+
+        /// <summary>Get the total number of bytes downloaded from this swarm (py get_total_down).</summary>
+        public long GetTotalDown()
+        {
+            var total = TransferHistory[1];
+            foreach (var circuit in ActiveCircuits)
+            {
+                total += circuit.BytesDown;
+            }
+            return total;
+        }
+    }
+
+    /// <summary>A Swarm.connections entry: the RP circuit and the introduction point it used.</summary>
+    public sealed class ConnectionEntry
+    {
+        public Circuit Circuit { get; }
+        public IntroductionPoint IntroPoint { get; }
+
+        public ConnectionEntry(Circuit circuit, IntroductionPoint introPoint)
+        {
+            Circuit = circuit;
+            IntroPoint = introPoint;
+        }
     }
 }
