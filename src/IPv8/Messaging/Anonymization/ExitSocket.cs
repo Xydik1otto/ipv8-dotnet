@@ -89,6 +89,9 @@ namespace IPv8.Messaging.Anonymization
         public UdpClient TransportIpv6 { get; private set; }
         public Queue<(byte[] Data, Address Destination)> Queue { get; } =
             new Queue<(byte[], Address)>();
+
+        /// <summary>Set under the Queue lock once both transports exist (see SendTo's enqueue race note).</summary>
+        private bool transportsReady;
         public bool Enabled { get; private set; }
 
         public TunnelExitSocket(long circuitId, Hop hop, TunnelCommunity overlay) : base(circuitId)
@@ -118,6 +121,13 @@ namespace IPv8.Messaging.Anonymization
                         TransportIpv6 = CreateTransport(AddressFamily.InterNetworkV6);
                         _ = StartReceiveLoop(TransportIpv4, DatagramReceivedIpv4);
                         _ = StartReceiveLoop(TransportIpv6, DatagramReceivedIpv6);
+
+                        // Publish readiness under the queue lock BEFORE draining, so a concurrent
+                        // SendTo can never strand a packet between its null-check and its enqueue.
+                        lock (Queue)
+                        {
+                            transportsReady = true;
+                        }
 
                         // Send any packets that have been waiting while the transports were being created
                         while (true)
@@ -234,12 +244,22 @@ namespace IPv8.Messaging.Anonymization
 
             if (transport == null)
             {
-                if (Queue.Count >= 10)
+                // The transports may come up concurrently (Enable's create_transports task);
+                // re-check under the queue lock so an enqueued packet can never be stranded
+                // by a flush that ran before this enqueue (py is single-threaded, we are not).
+                lock (Queue)
                 {
-                    Queue.Dequeue();
+                    if (!transportsReady)
+                    {
+                        if (Queue.Count >= 10)
+                        {
+                            Queue.Dequeue();
+                        }
+                        Queue.Enqueue((data, destination));
+                        return;
+                    }
+                    transport = destination.Type == AddressType.Udpv6 ? TransportIpv6 : TransportIpv4;
                 }
-                Queue.Enqueue((data, destination));
-                return;
             }
 
             var ep = destination.IsUdpv4

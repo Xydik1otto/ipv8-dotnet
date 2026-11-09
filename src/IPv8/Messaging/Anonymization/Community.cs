@@ -1302,7 +1302,12 @@ namespace IPv8.Messaging.Anonymization
             Log.TraceEvent(TraceEventType.Verbose, 0, $"Got data ({payloadCircuitId}) from {sockAddr}");
 
             var circuit = Circuits.TryGetValue(payloadCircuitId, out var found) ? found : null;
-            if (circuit != null && !origin.Equals(Address.Zero) && sockAddr.Equals(circuit.Hop.Address))
+            // py: ``if circuit and origin and sock_addr == circuit.hop.address`` — py's origin
+            // is a tuple, which is always truthy (even the zero address), so the effective
+            // check is "our circuit, delivered by its first hop". The zero-address origin is
+            // exactly how e2e raw data is sent (tunnel_data pre/post zero), and it must take
+            // this branch, not the exit branch.
+            if (circuit != null && sockAddr.Equals(circuit.Hop.Address))
             {
                 circuit.BeatHeart();
 
