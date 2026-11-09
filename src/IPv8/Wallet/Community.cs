@@ -26,8 +26,9 @@ namespace IPv8.Wallet
     /// <summary>Settings for the Attestation community (py AttestationSettings).</summary>
     public class AttestationSettings : CommunitySettings
     {
-        public AttestationSettings(byte[] communityId, Peer myPeer, Endpoint endpoint, Network network)
-            : base(communityId, myPeer, endpoint, network)
+        public AttestationSettings(byte[] communityId, Peer myPeer, Endpoint endpoint, Network network,
+                                   bool anonymize = false)
+            : base(communityId, myPeer, endpoint, network, anonymize: anonymize)
         {
         }
 

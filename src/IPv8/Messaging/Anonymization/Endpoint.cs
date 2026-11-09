@@ -53,7 +53,8 @@ namespace IPv8.Messaging.Anonymization
         public override void Send(Address address, byte[] packet)
         {
             var prefix = Util.Slice(packet, 0, 22);
-            if (!_settings.TryGetValue(prefix, out var enabled) || !enabled)
+            var registered = _settings.TryGetValue(prefix, out var enabled) && enabled;
+            if (!registered)
             {
                 Endpoint.Send(address, packet);
                 return;
@@ -111,13 +112,13 @@ namespace IPv8.Messaging.Anonymization
             }
         }
 
-        public new void AddListener(EndpointListener listener)
+        public override void AddListener(EndpointListener listener)
         {
             // Forward directly to the underlying endpoint.
             Endpoint.AddListener(listener);
         }
 
-        public new void AddPrefixListener(EndpointListener listener, byte[] prefix)
+        public override void AddPrefixListener(EndpointListener listener, byte[] prefix)
         {
             // Forward directly to the underlying endpoint.
             Endpoint.AddPrefixListener(listener, prefix);

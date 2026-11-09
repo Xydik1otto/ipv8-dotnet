@@ -48,7 +48,7 @@ namespace IPv8.Messaging.Interfaces
         }
 
         /// <summary>Add an EndpointListener to our listeners.</summary>
-        public void AddListener(EndpointListener listener)
+        public virtual void AddListener(EndpointListener listener)
         {
             if (listener == null)
             {
@@ -67,7 +67,7 @@ namespace IPv8.Messaging.Interfaces
         /// <summary>
         /// Add an EndpointListener to our listeners, only triggers on packets with a specific prefix.
         /// </summary>
-        public void AddPrefixListener(EndpointListener listener, byte[] prefix)
+        public virtual void AddPrefixListener(EndpointListener listener, byte[] prefix)
         {
             if (listener == null)
             {
@@ -90,7 +90,7 @@ namespace IPv8.Messaging.Interfaces
         }
 
         /// <summary>Remove a listener from our listeners, if it is registered.</summary>
-        public void RemoveListener(EndpointListener listener)
+        public virtual void RemoveListener(EndpointListener listener)
         {
             lock (_listenerUpdateLock)
             {

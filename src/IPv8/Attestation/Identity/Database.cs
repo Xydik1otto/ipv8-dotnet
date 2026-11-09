@@ -195,5 +195,24 @@ namespace IPv8.Attestation.Identity
             CreateTable(AttestationsTable, new[] { "public_key", "metadata_pointer" });
             return LatestDbVersion;
         }
+
+        /// <summary>
+        /// py communication_manager._drop_identity_table_data (the BEGIN/DELETE×3/COMMIT
+        /// executescript, expressed through the typed shim): remove all identity data for a
+        /// public key and return the attestation hashes that were removed.
+        /// </summary>
+        public List<byte[]> DropAllFor(byte[] publicKeyBin)
+        {
+            var attestationHashes = GetTokensFor(
+                ECCrypto.Default.KeyFromPublicBin(publicKeyBin))
+                .Select(token => token.ContentHash).ToList();
+
+            Delete(TokensTable, ("public_key", publicKeyBin));
+            Delete(MetadataTable, ("public_key", publicKeyBin));
+            Delete(AttestationsTable, ("public_key", publicKeyBin));
+            Commit();
+
+            return attestationHashes;
+        }
     }
 }

@@ -138,13 +138,16 @@ namespace IPv8.Messaging.Interfaces.Udp
                 {
                     break;
                 }
-                catch (SocketException)
+                catch (Exception)
                 {
                     if (!_running)
                     {
                         break;
                     }
-                    // Transient socket error: keep listening.
+                    // Transient socket error (SocketException, IOException from ICMP
+                    // unreachable on a UDP socket, ...): keep listening. py's asyncio
+                    // transport keeps running regardless of errors (error_received is
+                    // advisory), so the receive loop must never die on a packet error.
                 }
             }
         }

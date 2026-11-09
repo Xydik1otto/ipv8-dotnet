@@ -74,6 +74,23 @@ namespace IPv8
 
             MaxPeers = settings.MaxPeers;
 
+            // community.py:100: self.anonymize = settings.anonymize (the TunnelEndpoint's
+            // notify_listeners filter keys off this attribute).
+            Anonymize = settings.Anonymize;
+
+            // community.py:102-106: anonymized communities register their prefix with a TunnelEndpoint.
+            if (settings.Anonymize)
+            {
+                if (Endpoint is Messaging.Anonymization.TunnelEndpoint tunnelEndpoint)
+                {
+                    tunnelEndpoint.SetAnonymity(_prefix, true);
+                }
+                else
+                {
+                    System.Diagnostics.Trace.TraceWarning("Cannot anonymize community traffic without TunnelEndpoint");
+                }
+            }
+
             Network.RegisterServiceProvider(communityId, this);
             Network.BlacklistMids.Add(MyPeer.Mid);
 

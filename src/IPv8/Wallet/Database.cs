@@ -74,5 +74,18 @@ namespace IPv8.Wallet
             CreateTable(_tableName, new[] { "hash" });
             return LatestDbVersion;
         }
+
+        /// <summary>
+        /// py communication_manager._drop_attestation_table_data (the DELETE ... WHERE hash IN
+        /// (...) statement, expressed through the typed shim).
+        /// </summary>
+        public void DeleteHashes(List<byte[]> attestationHashes)
+        {
+            foreach (var attestationHash in attestationHashes)
+            {
+                Delete(_tableName, ("hash", attestationHash));
+            }
+            Commit();
+        }
     }
 }

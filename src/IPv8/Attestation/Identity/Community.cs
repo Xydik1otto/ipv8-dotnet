@@ -14,8 +14,9 @@ namespace IPv8.Attestation.Identity
     /// <summary>Settings for the Identity community (py IdentitySettings).</summary>
     public class IdentitySettings : CommunitySettings
     {
-        public IdentitySettings(byte[] communityId, Peer myPeer, Endpoint endpoint, Network network)
-            : base(communityId, myPeer, endpoint, network)
+        public IdentitySettings(byte[] communityId, Peer myPeer, Endpoint endpoint, Network network,
+                                bool anonymize = false)
+            : base(communityId, myPeer, endpoint, network, anonymize: anonymize)
         {
         }
 
@@ -60,7 +61,8 @@ namespace IPv8.Attestation.Identity
         /// <summary>Map of peer to the highest permitted index (py: permissions).</summary>
         public readonly Dictionary<Peer, int> Permissions = new Dictionary<Peer, int>();
 
-        public IdentityCommunity(IdentitySettings settings) : base(settings, FixedCommunityId)
+        public IdentityCommunity(IdentitySettings settings, byte[] communityIdOverride = null)
+            : base(settings, communityIdOverride ?? FixedCommunityId)
         {
             if (settings.IdentityManager == null)
             {
